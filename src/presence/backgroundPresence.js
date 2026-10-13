@@ -1,23 +1,28 @@
 // src/presence/backgroundPresence.js
-// Keeps sending presence heartbeats while the app is in the background, so
-// joining / leaving the office Wi-Fi is noticed even when the app isn't open.
+// Background safety net: about every 15 minutes the phone OS lets us run a
+// quick check, so attendance (in AND going time) is still marked if the
+// geofence / location events were missed.
+// (The instant "entered the office" trigger is the geofence in geofenceTask.js.)
 //
-// MUST be imported once at app start (App.tsx) — TaskManager.defineTask has
+// MUST be imported once at app start (App.tsx) - TaskManager.defineTask has
 // to run at module load, outside any React component.
-//
-// Limits (set by the phone's OS, not by us): Android runs this roughly every
-// 15 minutes; iOS runs it when it decides to (often less). If the phone stops
-// checking in, the backend marks a disconnect after its timeout and clears
-// it again on the next check-in — so a late check-in never loses attendance.
 import * as TaskManager from "expo-task-manager";
 import * as BackgroundTask from "expo-background-task";
-import { sendPresenceHeartbeat } from "../services/presenceService";
+import { signInIfInOffice } from "./autoAttendance";
+// Also registers the geofence + background-location tasks.
+import { startBackgroundLocation, startOfficeGeofence, stopOfficeGeofence } from "./geofenceTask";
+import { clearOfficeLog } from "./officeSession";
 
 export const PRESENCE_TASK = "hrm-presence-heartbeat";
 
 TaskManager.defineTask(PRESENCE_TASK, async () => {
   try {
-    await sendPresenceHeartbeat("heartbeat");
+    // freshGps:false -> use the last known position, never wait for a new fix
+    await signInIfInOffice({ source: "background", freshGps: false });
+    // The office circle may have just been learned from the Wi-Fi: make
+    // sure the geofence / location watch are running.
+    await startOfficeGeofence();
+    await startBackgroundLocation();
     return BackgroundTask.BackgroundTaskResult.Success;
   } catch {
     return BackgroundTask.BackgroundTaskResult.Failed;
@@ -36,6 +41,8 @@ export async function registerPresenceTask() {
   }
 }
 
+// Called on logout (AuthContext): stop everything so a logged-out phone
+// never tries to sign anyone in.
 export async function unregisterPresenceTask() {
   try {
     if (await TaskManager.isTaskRegisteredAsync(PRESENCE_TASK)) {
@@ -44,4 +51,6 @@ export async function unregisterPresenceTask() {
   } catch {
     // ignore
   }
+  await stopOfficeGeofence();
+  await clearOfficeLog();
 }

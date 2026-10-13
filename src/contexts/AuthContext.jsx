@@ -5,12 +5,16 @@ import React, {
   useState,
   useEffect,
   useCallback,
+  useMemo,
 } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import api, { setOnUnauthorized } from "../utils/api";
 import { staffService } from "../services/staffService";
 import { hasLeftOrganization } from "../utils/staffStatus";
 import { unregisterPresenceTask } from "../presence/backgroundPresence";
+import { setAuthToken } from "../utils/authToken";
+import { clearPhotoStore, loadPhotoForUser, setMyLocalPhoto } from "../utils/photoStore";
+import { clearAppCaches } from "../utils/appCache";
 
 const AuthContext = createContext(null);
 
@@ -45,6 +49,9 @@ export const AuthProvider = ({ children }) => {
 
   const logout = useCallback(async () => {
     await unregisterPresenceTask();
+    setAuthToken(null);
+    clearPhotoStore();
+    clearAppCaches();
     await AsyncStorage.removeItem("token");
     await AsyncStorage.removeItem("user");
     await AsyncStorage.removeItem("myProfile");
@@ -68,6 +75,9 @@ export const AuthProvider = ({ children }) => {
       const res = await staffService.getMyProfile();
       const fresh = res.data?.data || null;
       setMyProfile(fresh);
+      // Server says explicitly "no photo" (e.g. removed by admin) → drop the
+      // copy saved on this phone too.
+      if (fresh && "photoUrl" in fresh && !fresh.photoUrl) setMyLocalPhoto(null);
       if (fresh) await AsyncStorage.setItem("myProfile", JSON.stringify(fresh));
       else await AsyncStorage.removeItem("myProfile");
     } catch (e) {
@@ -97,11 +107,14 @@ export const AuthProvider = ({ children }) => {
 
   const login = useCallback(async (email, password) => {
     try {
-      const response = await api.post("/api/auth/login", { email, password });
+      // client: "mobile" → a long-lived session, so background attendance keeps
+      // working without the user having to log in again every week.
+      const response = await api.post("/api/auth/login", { email, password, client: "mobile" });
       // Backend responds with { success, message, data: { id, name, email, role, token } }
       const payload = response.data?.data || response.data;
       const { token: newToken, ...rawUser } = payload;
       const userInfo = normalizeUser(rawUser);
+      setAuthToken(newToken);
       await AsyncStorage.setItem("token", newToken);
       await AsyncStorage.setItem("user", JSON.stringify(userInfo));
       setTokenState(newToken);
@@ -133,6 +146,7 @@ export const AuthProvider = ({ children }) => {
   useEffect(() => {
     (async () => {
       const storedToken = await AsyncStorage.getItem("token");
+      setAuthToken(storedToken);
       if (storedToken) {
         setTokenState(storedToken);
       } else {
@@ -143,6 +157,8 @@ export const AuthProvider = ({ children }) => {
     // If any request comes back 401, drop local session so the navigator
     // switches back to the Login screen.
     setOnUnauthorized(() => {
+      setAuthToken(null);
+      clearPhotoStore();
       setTokenState(null);
       setUser(null);
       setMyProfile(null);
@@ -158,28 +174,37 @@ export const AuthProvider = ({ children }) => {
   // Load the staff profile once we know who is logged in.
   const userId = user?.id;
   useEffect(() => {
-    if (userId) loadMyProfile();
+    if (!userId) return;
+    // Saved photo first (instant, works offline), then the server profile.
+    loadPhotoForUser(userId).finally(loadMyProfile);
   }, [userId, loadMyProfile]);
 
   const isAdmin = isAdminRole(user?.role);
+  const hasLeft = !isAdmin && hasLeftOrganization(myProfile);
+  const canAccess = useCallback((tabKey) => hasTabAccess(user, tabKey), [user]);
 
-  const value = {
-    user,
-    loading,
-    isAuthenticated: !!user,
-    isAdmin,
-    isSuperAdmin: isSuperAdminRole(user?.role),
-    canAccess: (tabKey) => hasTabAccess(user, tabKey),
-    myProfile,
-    profileLoading,
-    reloadMyProfile: loadMyProfile,
-    // Staff member whose relieving date has passed. Admin accounts are never
-    // treated as "left" here — they still manage the app.
-    hasLeft: !isAdmin && hasLeftOrganization(myProfile),
-    login,
-    logout,
-    token,
-  };
+  // Memoised: screens re-render only when something they use changes
+  // (a new object on every render made EVERY screen re-render).
+  const value = useMemo(
+    () => ({
+      user,
+      loading,
+      isAuthenticated: !!user,
+      isAdmin,
+      isSuperAdmin: isSuperAdminRole(user?.role),
+      canAccess,
+      myProfile,
+      profileLoading,
+      reloadMyProfile: loadMyProfile,
+      // Staff member whose relieving date has passed. Admin accounts are never
+      // treated as "left" here — they still manage the app.
+      hasLeft,
+      login,
+      logout,
+      token,
+    }),
+    [user, loading, isAdmin, canAccess, myProfile, profileLoading, loadMyProfile, hasLeft, login, logout, token],
+  );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };

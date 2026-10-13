@@ -4,8 +4,9 @@ import { useAuth } from "../contexts/AuthContext";
 import { ErrorState, Loading, EmptyState } from "../components/ScreenStates";
 import Avatar from "../components/Avatar";
 import { Badge, Card } from "../components/ModuleUI";
+import DocumentsPanel from "../components/DocumentsPanel";
 import AttendanceCalendar, { clearAttendanceCache } from "../components/AttendanceCalendar";
-import { SearchBox, filterStaff, staffKeyOf, staffNameOf, useAllStaff } from "../components/StaffPicker";
+import { SearchBox, clearStaffCache, filterStaff, staffKeyOf, staffNameOf, useAllStaff } from "../components/StaffPicker";
 import { hasLeftOrganization } from "../utils/staffStatus";
 import { formatMoney, formatShortDate } from "../utils/format";
 import { colors, radius } from "../theme/colors";
@@ -74,7 +75,7 @@ function StaffListContent() {
           return (
             <TouchableOpacity activeOpacity={0.75} onPress={() => setSelected(item)}>
               <Card style={{ marginBottom: 12, flexDirection: "row", alignItems: "center" }}>
-                <Avatar name={name} size={44} />
+                <Avatar name={name} uri={item.photoUrl} size={44} />
                 <View style={{ flex: 1, marginLeft: 12, marginRight: 10 }}>
                   <Text style={{ fontSize: 15, fontWeight: "600", color: colors.text }} numberOfLines={1}>
                     {name}
@@ -124,7 +125,10 @@ const KNOWN_FIELDS = [
   ["address", "Address"],
 ];
 // Internal / noisy keys that are never shown.
-const HIDDEN = new Set(["_id", "id", "__v", "password", "userId", "user", "createdBy", "updatedBy", "avatar", "photo", "image"]);
+const HIDDEN = new Set([
+  "_id", "id", "__v", "password", "passwordEncrypted", "userId", "user", "createdBy", "updatedBy",
+  "avatar", "photo", "image", "photoUrl", "photoUpdatedAt", "issuedLetters",
+]);
 const MONEY_KEY = /salary|amount|ctc|pay$/i;
 const DATE_KEY = /date|dob|At$/i;
 
@@ -227,7 +231,7 @@ function StaffDetails({ staff, onBack }) {
             gap: 12,
           }}
         >
-          <Avatar name={name} size={52} />
+          <Avatar name={name} uri={staff.photoUrl} size={52} bg="rgba(255,255,255,0.2)" color="#fff" />
           <View style={{ flex: 1 }}>
             <Text style={{ color: "#fff", fontSize: 18, fontWeight: "800" }} numberOfLines={1}>
               {name}
@@ -266,6 +270,11 @@ function StaffDetails({ staff, onBack }) {
             ))
           )}
         </Card>
+
+        <Text style={{ fontSize: 11, fontWeight: "700", color: colors.primary, letterSpacing: 0.6, marginTop: 16, marginBottom: 8 }}>
+          DOCUMENTS
+        </Text>
+        <DocumentsPanel staffId={staffKeyOf(staff)} staffName={name} onChanged={(t) => t === "photo" && clearStaffCache()} />
 
         <Text style={{ fontSize: 11, fontWeight: "700", color: colors.primary, letterSpacing: 0.6, marginTop: 16 }}>
           ATTENDANCE &amp; SALARY

@@ -1,11 +1,12 @@
 // src/contexts/AttendanceContext.jsx
 // Single source of truth for "am I clocked in today". Shared by the Home card,
 // the raised button in the tab bar, Activity and Profile so they never drift.
-import React, { createContext, useCallback, useContext, useEffect, useState } from "react";
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { attendanceService } from "../services/attendanceService";
 import { unwrapList } from "../utils/helpers";
 import { useAuth } from "./AuthContext";
-import { usePresence } from "../presence/usePresence";
+import { openAllowAllTheTime, usePresence } from "../presence/usePresence";
+import { summarizeDay, useOfficeDay } from "../presence/officeSession";
 
 const AttendanceContext = createContext(null);
 
@@ -83,10 +84,29 @@ export function AttendanceProvider({ children }) {
 
   // Automatic attendance from office Wi-Fi (staff only — admins are never
   // auto-signed in/out, same as the backend).
-  const presence = usePresence({
-    enabled: !isAdmin && !hasLeft,
+  const autoEnabled = !isAdmin && !hasLeft;
+  const { presence, autoMode, refreshPermission } = usePresence({
+    enabled: autoEnabled,
     onAttendanceChanged: loadData,
   });
+
+  // Today's in / out / back log + going time, refreshed every minute so the
+  // "out for 12 min" and the worked time keep moving.
+  const officeLog = useOfficeDay();
+  const [nowTick, setNowTick] = useState(Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNowTick(Date.now()), 60000);
+    return () => clearInterval(t);
+  }, []);
+  const officeDay = useMemo(
+    () => summarizeDay(officeLog, attendance, nowTick),
+    [officeLog, attendance, nowTick],
+  );
+
+  const enableAutoMode = useCallback(async () => {
+    await openAllowAllTheTime();
+    await refreshPermission();
+  }, [refreshPermission]);
 
   const refresh = useCallback(async () => {
     setRefreshing(true);
@@ -123,22 +143,31 @@ export function AttendanceProvider({ children }) {
     [hasClockedIn, clockIn, clockOut]
   );
 
-  const value = {
-    attendance,
-    list,
-    loading,
-    refreshing,
-    actionLoading,
-    error,
-    hasClockedIn,
-    hasClockedOut,
-    refresh,
-    clockIn,
-    clockOut,
-    toggleClock,
-    canClock: !hasLeft,
-    presence,
-  };
+  // Memoised so screens only re-render when attendance data really changes.
+  const value = useMemo(
+    () => ({
+      attendance,
+      list,
+      loading,
+      refreshing,
+      actionLoading,
+      error,
+      hasClockedIn,
+      hasClockedOut,
+      refresh,
+      clockIn,
+      clockOut,
+      toggleClock,
+      canClock: !hasLeft,
+      presence,
+      // Fully automatic attendance ("Allow all the time" given, staff only):
+      // the screens hide the Clock in / Clock out buttons.
+      autoMode: autoEnabled && autoMode,
+      enableAutoMode,
+      officeDay,
+    }),
+    [attendance, list, loading, refreshing, actionLoading, error, hasClockedIn, hasClockedOut, refresh, clockIn, clockOut, toggleClock, hasLeft, presence, autoEnabled, autoMode, enableAutoMode, officeDay],
+  );
 
   return <AttendanceContext.Provider value={value}>{children}</AttendanceContext.Provider>;
 }

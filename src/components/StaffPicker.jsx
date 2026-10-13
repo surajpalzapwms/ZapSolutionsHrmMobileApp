@@ -79,7 +79,7 @@ export function filterStaff(list, query) {
   );
 }
 
-export default function StaffPicker({ staff, selected, onSelect, extraOption }) {
+export default function StaffPicker({ staff, selected, onSelect, extraOption, title = "VIEWING STAFF" }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const list = useMemo(() => filterStaff(staff, query), [staff, query]);
@@ -112,10 +112,10 @@ export default function StaffPicker({ staff, selected, onSelect, extraOption }) 
           paddingVertical: 10,
         }}
       >
-        <Avatar name={label} size={34} />
+        <Avatar name={label} uri={selected?.photoUrl} size={34} />
         <View style={{ flex: 1 }}>
           <Text style={{ fontSize: 10, fontWeight: "700", color: colors.textMuted, letterSpacing: 0.5 }}>
-            VIEWING STAFF
+            {title}
           </Text>
           <Text style={{ fontSize: 14, fontWeight: "700", color: colors.text }} numberOfLines={1}>
             {label}
@@ -159,6 +159,7 @@ export default function StaffPicker({ staff, selected, onSelect, extraOption }) 
             renderItem={({ item }) => (
               <PickRow
                 name={staffNameOf(item)}
+                photo={item.photoUrl}
                 sub={[item.staffId, item.designation || item.projectName].filter(Boolean).join(" · ")}
                 left={hasLeftOrganization(item)}
                 active={staffKeyOf(item) === staffKeyOf(selected)}
@@ -209,7 +210,7 @@ export function SearchBox({ value, onChange, style }) {
   );
 }
 
-function PickRow({ name, sub, active, left, onPress }) {
+function PickRow({ name, photo, sub, active, left, onPress }) {
   return (
     <TouchableOpacity
       activeOpacity={0.75}
@@ -226,7 +227,7 @@ function PickRow({ name, sub, active, left, onPress }) {
         marginBottom: 8,
       }}
     >
-      <Avatar name={name} size={36} />
+      <Avatar name={name} uri={photo} size={36} />
       <View style={{ flex: 1 }}>
         <Text style={{ fontSize: 14, fontWeight: "700", color: colors.text }} numberOfLines={1}>
           {name}

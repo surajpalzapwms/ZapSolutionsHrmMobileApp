@@ -1,4 +1,13 @@
 // src/utils/helpers.js
+import { BACKEND_URL } from "./constants";
+
+// The backend returns photo links as RELATIVE paths ("/api/documents/photo/...").
+// <Image> needs a full URL, so prefix the server address. Full URLs pass through.
+export const absoluteUrl = (path) => {
+  if (!path || typeof path !== "string") return null;
+  if (/^(https?:|file:|data:)/i.test(path)) return path;
+  return `${String(BACKEND_URL).replace(/\/+$/, "")}${path.startsWith("/") ? "" : "/"}${path}`;
+};
 export const capitalize = (str) => {
   if (!str) return "";
   return str.charAt(0).toUpperCase() + str.slice(1).toLowerCase();

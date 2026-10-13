@@ -4,7 +4,9 @@
 // deductions (each line), advance recovered, leave deduction, net salary,
 // and what has been paid / is still pending with the payment history.
 import React, { memo, useCallback, useMemo, useState } from "react";
-import { BackHandler, ScrollView, Text, TouchableOpacity, View } from "react-native";
+import { BackHandler, FlatList, RefreshControl, ScrollView, Text, TouchableOpacity, View } from "react-native";
+import { BackLink, StaffRow, TotalsHeader, idOf, useStaffMap } from "../components/StaffWise";
+import { Loading, EmptyState } from "../components/ScreenStates";
 import { payrollService } from "../services/payrollService";
 import { useListLoader } from "../hooks/useListLoader";
 import ModuleList from "../components/ModuleList";
@@ -24,7 +26,12 @@ const staffNameOf = (item) =>
   "Staff";
 
 export default function PayrollScreen() {
-  const { isAdmin } = useAuth();
+  const { isAdmin, isSuperAdmin } = useAuth();
+  if (isSuperAdmin) return <PayrollByStaff />;
+  return <PayrollMonths isAdmin={isAdmin} />;
+}
+
+function PayrollMonths({ isAdmin }) {
   const loader = useListLoader(() => payrollService.getAll(), "Could not load payroll.");
   const [selected, setSelected] = useState(null);
 
@@ -115,7 +122,7 @@ function Section({ title, children }) {
   );
 }
 
-function PayrollDetails({ item, showName, onBack }) {
+export function PayrollDetails({ item, showName, onBack }) {
   const info = item.attendanceInfo || {};
   const allowances = Array.isArray(item.allowances) ? item.allowances.filter((a) => num(a.amount)) : [];
   const deductions = Array.isArray(item.deductions) ? item.deductions.filter((d) => num(d.amount)) : [];
@@ -224,5 +231,120 @@ function PayrollDetails({ item, showName, onBack }) {
         </Section>
       ) : null}
     </ScrollView>
+  );
+}
+
+// ── Super admin: every staff name first → tap → that person's months ────
+const byPeriodDesc = (a, b) => String(b.period || b.month || "").localeCompare(String(a.period || a.month || ""));
+
+function PayrollByStaff() {
+  const loader = useListLoader(() => payrollService.getAll(), "Could not load payroll.");
+  const { staff, loading: staffLoading } = useStaffMap(true);
+  const [openId, setOpenId] = useState(null);
+  const [selected, setSelected] = useState(null);
+
+  // Back: month details → that staff's months → all staff.
+  React.useEffect(() => {
+    if (!openId && !selected) return undefined;
+    const sub = BackHandler.addEventListener("hardwareBackPress", () => {
+      if (selected) setSelected(null);
+      else setOpenId(null);
+      return true;
+    });
+    return () => sub.remove();
+  }, [openId, selected]);
+
+  const groups = useMemo(() => {
+    const by = new Map();
+    // Every staff member is listed, even before their first payroll.
+    staff.forEach((st) => by.set(String(st._id), { id: String(st._id), name: st.staffName, photoUrl: st.photoUrl, items: [] }));
+    loader.items.forEach((p) => {
+      const id = idOf(p.employeeId) || staffNameOf(p);
+      if (!by.has(id)) by.set(id, { id, name: staffNameOf(p), photoUrl: null, items: [] });
+      by.get(id).items.push(p);
+    });
+    return [...by.values()]
+      .map((g) => {
+        const items = g.items.sort(byPeriodDesc);
+        return {
+          ...g,
+          items,
+          totalNet: items.reduce((sum, p) => sum + num(p.netSalary ?? p.netPay ?? p.amount), 0),
+          pending: items.reduce((sum, p) => sum + num(p.pendingAmount), 0),
+          latest: items[0]?.period || items[0]?.month || null,
+        };
+      })
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [staff, loader.items]);
+
+  const totals = useMemo(
+    () => ({
+      net: groups.reduce((s, g) => s + g.totalNet, 0),
+      pending: groups.reduce((s, g) => s + g.pending, 0),
+    }),
+    [groups],
+  );
+
+  if (loader.loading || (staffLoading && !staff.length)) return <Loading />;
+
+  if (selected) return <PayrollDetails item={selected} showName onBack={() => setSelected(null)} />;
+
+  const open = groups.find((g) => g.id === openId);
+  if (open) {
+    return (
+      <FlatList
+        style={{ flex: 1, backgroundColor: colors.screen }}
+        contentContainerStyle={{ padding: 16, paddingBottom: 40 }}
+        data={open.items}
+        keyExtractor={(p, i) => p._id || String(i)}
+        ListHeaderComponent={
+          <>
+            <BackLink label="All staff" onPress={() => setOpenId(null)} />
+            <TotalsHeader
+              title={`${open.name} · month-wise payroll`}
+              items={[
+                { label: "Total net salary", value: formatMoney(open.totalNet) },
+                { label: "Pending", value: formatMoney(open.pending) },
+                { label: "Months", value: String(open.items.length) },
+              ]}
+            />
+          </>
+        }
+        ListEmptyComponent={<EmptyState emoji="💰" message="No payroll for this staff member yet." />}
+        renderItem={({ item }) => <PayrollRow item={item} showName={false} onPress={setSelected} />}
+      />
+    );
+  }
+
+  return (
+    <FlatList
+      style={{ flex: 1, backgroundColor: colors.screen }}
+      contentContainerStyle={{ padding: 16, paddingBottom: 40 }}
+      data={groups}
+      keyExtractor={(g) => g.id}
+      refreshControl={<RefreshControl refreshing={loader.refreshing} onRefresh={loader.refresh} tintColor={colors.primary} />}
+      initialNumToRender={12}
+      ListHeaderComponent={
+        <TotalsHeader
+          title="Payroll — all staff"
+          items={[
+            { label: "Total net salary", value: formatMoney(totals.net) },
+            { label: "Pending", value: formatMoney(totals.pending) },
+            { label: "Staff", value: String(groups.length) },
+          ]}
+        />
+      }
+      ListEmptyComponent={<EmptyState emoji="💰" message={loader.error || "No staff found."} />}
+      renderItem={({ item: g }) => (
+        <StaffRow
+          name={g.name}
+          photoUrl={g.photoUrl}
+          subtitle={g.items.length ? `${g.items.length} month${g.items.length === 1 ? "" : "s"} · latest ${formatPeriod(g.latest)}` : "No payroll yet"}
+          meta={g.pending > 0 ? `Pending ${formatMoney(g.pending)}` : undefined}
+          amount={g.items.length ? formatMoney(g.totalNet) : undefined}
+          onPress={() => setOpenId(g.id)}
+        />
+      )}
+    />
   );
 }

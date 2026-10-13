@@ -1,6 +1,4 @@
-// src/components/AdminLeaveRequests.jsx — admin view of staff leave requests
-// with Approve / Reject on pending ones. (Admins can't use the staff-only
-// "/requests/my" endpoints, so they get this instead.)
+
 import React, { useCallback, useEffect, useState } from "react";
 import { ActivityIndicator, Alert, Text, TouchableOpacity, View } from "react-native";
 import { attendanceService } from "../services/attendanceService";

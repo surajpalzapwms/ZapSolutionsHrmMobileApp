@@ -10,11 +10,13 @@ import ModuleSheetHeader from "../components/ModuleSheetHeader";
 import AttendanceCalendar, { clearAttendanceCache } from "../components/AttendanceCalendar";
 import { colors, radius, shadow } from "../theme/colors";
 import { formatClock, formatShortDate, totalHours } from "../utils/format";
+import { durationLabel } from "../components/OfficeDayTimeline";
+import AttendanceNotifications from "../components/AttendanceNotifications";
 import StaffPicker, { clearStaffCache, staffKeyOf, staffNameOf, useAllStaff } from "../components/StaffPicker";
 
 export default function AttendanceScreen() {
-  const { attendance, refresh } = useAttendance();
-  const { hasLeft, myProfile, isAdmin } = useAuth();
+  const { attendance, refresh, autoMode, officeDay, presence } = useAttendance();
+  const { hasLeft, myProfile, isAdmin, isSuperAdmin } = useAuth();
   const [refreshing, setRefreshing] = useState(false);
   const [calendarKey, setCalendarKey] = useState(0);
 
@@ -24,8 +26,8 @@ export default function AttendanceScreen() {
   // An admin account with no staff profile of its own starts on the first
   // staff member instead of an empty "no profile" calendar.
   useEffect(() => {
-    if (isAdmin && !myProfile && !viewStaff && allStaff.length) setViewStaff(allStaff[0]);
-  }, [isAdmin, myProfile, viewStaff, allStaff]);
+    if (isAdmin && (!myProfile || isSuperAdmin) && !viewStaff && allStaff.length) setViewStaff(allStaff[0]);
+  }, [isAdmin, isSuperAdmin, myProfile, viewStaff, allStaff]);
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -70,6 +72,32 @@ export default function AttendanceScreen() {
               Home.
             </Text>
           </View>
+        ) : isSuperAdmin ? null : autoMode ? (
+          <View
+            style={{
+              marginHorizontal: 16,
+              marginTop: 16,
+              backgroundColor: colors.card,
+              borderRadius: radius.lg,
+              borderWidth: 1,
+              borderColor: colors.border,
+              padding: 14,
+              ...shadow.soft,
+            }}
+          >
+            {/* Only the times here. Wi-Fi / break details sit behind the 🔔
+                (the number = how many updates today); tap it to see them. */}
+            <View style={{ flexDirection: "row", alignItems: "center" }}>
+              <Col label="In time" value={formatClock(officeDay.firstIn)} />
+              <View style={{ width: 1, alignSelf: "stretch", backgroundColor: colors.border }} />
+              <Col label="Going time" value={formatClock(officeDay.goingTime)} />
+              <View style={{ width: 1, alignSelf: "stretch", backgroundColor: colors.border }} />
+              <Col label={officeDay.goingTime ? "In office" : "In office so far"} value={durationLabel(officeDay.insideMinutes)} />
+              <View style={{ paddingLeft: 8 }}>
+                <AttendanceNotifications day={officeDay} presence={presence} attendance={attendance} />
+              </View>
+            </View>
+          </View>
         ) : (
           <View
             style={{
@@ -101,7 +129,7 @@ export default function AttendanceScreen() {
               staff={allStaff}
               selected={viewStaff}
               onSelect={setViewStaff}
-              extraOption={myProfile ? { label: "My attendance", sub: staffNameOf(myProfile) } : null}
+              extraOption={myProfile && !isSuperAdmin ? { label: "My attendance", sub: staffNameOf(myProfile) } : null}
             />
             {staffError ? (
               <Text style={{ fontSize: 12, color: colors.danger, marginTop: 6 }}>{staffError}</Text>
@@ -115,6 +143,10 @@ export default function AttendanceScreen() {
             staffId={staffKeyOf(viewStaff)}
             staff={viewStaff}
           />
+        ) : isSuperAdmin ? (
+          <Text style={{ textAlign: "center", color: colors.textMuted, marginTop: 24 }}>
+            {staffError ? "" : "Loading staff…"}
+          </Text>
         ) : (
           <AttendanceCalendar key={`me-${calendarKey}`} />
         )}

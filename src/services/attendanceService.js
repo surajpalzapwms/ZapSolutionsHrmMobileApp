@@ -9,7 +9,10 @@ export const attendanceService = {
   // sign-out unlocks after 7h45m worked, or once an admin approves early).
   getMyTodayAttendance: () => api.get("/api/hrm/leaves/attendance/me/today"),
   signIn: () => api.post("/api/hrm/leaves/attendance/checkin"),
-  signOut: () => api.post("/api/hrm/leaves/attendance/checkout"),
+  // body (optional, automatic sign-out): { logoutTime, auto: true, reason }
+  // — logoutTime is when the phone actually left the office; a server that
+  // does not read it simply uses "now".
+  signOut: (body) => api.post("/api/hrm/leaves/attendance/checkout", body || undefined),
   // Admin only: everyone who has clocked in today. `withUser=1` asks the
   // (updated) backend to include each person's name; older servers ignore it.
   getTodayAttendanceList: () =>

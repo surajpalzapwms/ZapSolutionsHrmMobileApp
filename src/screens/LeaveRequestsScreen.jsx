@@ -15,6 +15,7 @@ import { unwrapList } from "../utils/helpers";
 import { toDateKey } from "../utils/format";
 import { Card, SectionTitle } from "../components/ModuleUI";
 import AdminLeaveRequests from "../components/AdminLeaveRequests";
+import LeaveByStaff from "../components/LeaveByStaff";
 import { useAuth } from "../contexts/AuthContext";
 import LeaveRequestsList, { groupLeaves } from "../components/LeaveRequestsList";
 import { colors, radius } from "../theme/colors";
@@ -31,20 +32,50 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 export default function LeaveRequestsScreen() {
   const { isAdmin } = useAuth();
-  if (isAdmin) {
-    return (
-      <ScrollView
-        style={{ flex: 1, backgroundColor: colors.screen }}
-        contentContainerStyle={{ padding: 16, paddingBottom: 40 }}
-      >
-        <SectionTitle>Staff leave requests</SectionTitle>
-        <Card>
-          <AdminLeaveRequests />
-        </Card>
-      </ScrollView>
-    );
-  }
+  if (isAdmin) return <AdminLeave />;
   return <StaffLeaveRequests />;
+}
+
+// Admin / super admin: "Staff-wise" (every staff member → each leave they
+// took) and "Requests" (approve / reject).
+function AdminLeave() {
+  const [tab, setTab] = useState("staff");
+  return (
+    <ScrollView
+      style={{ flex: 1, backgroundColor: colors.screen }}
+      contentContainerStyle={{ padding: 16, paddingBottom: 40 }}
+      keyboardShouldPersistTaps="handled"
+    >
+      <View style={{ flexDirection: "row", backgroundColor: colors.track, borderRadius: radius.pill, padding: 4, marginBottom: 14 }}>
+        {[
+          ["staff", "Staff-wise leave"],
+          ["requests", "Leave requests"],
+        ].map(([key, label]) => {
+          const active = tab === key;
+          return (
+            <TouchableOpacity
+              key={key}
+              onPress={() => setTab(key)}
+              activeOpacity={0.85}
+              style={{ flex: 1, paddingVertical: 9, borderRadius: radius.pill, alignItems: "center", backgroundColor: active ? colors.primary : "transparent" }}
+            >
+              <Text style={{ fontSize: 13, fontWeight: "700", color: active ? "#fff" : colors.textMuted }}>{label}</Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+      {tab === "staff" ? (
+        <LeaveByStaff />
+      ) : (
+        <>
+          <SectionTitle>Staff leave requests</SectionTitle>
+          <Card>
+            <AdminLeaveRequests />
+          </Card>
+        </>
+      )}
+    </ScrollView>
+  );
 }
 
 function StaffLeaveRequests() {

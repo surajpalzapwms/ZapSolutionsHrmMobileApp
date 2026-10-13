@@ -16,6 +16,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "../contexts/AuthContext";
 import CornerLogo from "../components/CornerLogo";
 import { colors, shadow } from "../theme/colors";
+import { APP_NAME } from "../utils/constants";
 
 export default function LoginScreen() {
   const { login } = useAuth();
@@ -32,7 +33,7 @@ export default function LoginScreen() {
 
   const handleSubmit = async () => {
     if (!email || !password) {
-      setError("Enter your email and password.");
+      setError("Enter your email or Staff ID and password.");
       return;
     }
     setError("");
@@ -80,19 +81,22 @@ export default function LoginScreen() {
               ...shadow.card,
             }}
           >
+            <Text style={{ fontSize: 13, fontWeight: "800", letterSpacing: 0.5, color: "#4F46E5", marginBottom: 6 }}>
+              {APP_NAME}
+            </Text>
             <Text style={{ fontSize: 24, fontWeight: "700", color: "#111827" }}>Welcome Back</Text>
             <Text style={{ marginTop: 4, fontSize: 14, color: "#9CA3AF" }}>Enter your details below</Text>
 
             <View style={{ marginTop: 32, gap: 16 }}>
-              <Field label="Email Address" icon="mail-outline">
+              <Field label="Email or Staff ID" icon="mail-outline">
                 <TextInput
-                  placeholder="you@company.com"
+                  placeholder="you@company.com or ZS0019"
                   placeholderTextColor="#B0B0C3"
                   value={email}
                   onChangeText={setEmail}
                   autoCapitalize="none"
                   autoCorrect={false}
-                  keyboardType="email-address"
+                  keyboardType="default"
                   style={inputStyle}
                 />
               </Field>

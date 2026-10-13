@@ -128,11 +128,11 @@ export function EmojiIcon({ emoji, bg, size = 44 }) {
 
 // One list item: emoji tile on the left, title/subtitle in the middle,
 // optional right-hand content (badge, amount…).
-export function ListItem({ emoji, emojiBg = colors.primarySoft, title, subtitle, meta, right }) {
+export function ListItem({ emoji, emojiBg = colors.primarySoft, leading, title, subtitle, meta, right }) {
   return (
     <Card style={{ marginBottom: 12, flexDirection: "row", alignItems: "center" }}>
-      {emoji ? <EmojiIcon emoji={emoji} bg={emojiBg} /> : null}
-      <View style={{ flex: 1, marginLeft: emoji ? 12 : 0, marginRight: right ? 10 : 0 }}>
+      {leading || (emoji ? <EmojiIcon emoji={emoji} bg={emojiBg} /> : null)}
+      <View style={{ flex: 1, marginLeft: leading || emoji ? 12 : 0, marginRight: right ? 10 : 0 }}>
         <Text style={{ fontSize: 15, fontWeight: "600", color: colors.text }} numberOfLines={1}>
           {title}
         </Text>

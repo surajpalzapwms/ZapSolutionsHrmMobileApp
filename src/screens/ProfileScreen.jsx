@@ -1,10 +1,14 @@
 // src/screens/ProfileScreen.jsx — same layout as the testing app's Profile.
 import React, { useEffect, useState } from "react";
-import { ActivityIndicator, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { ActivityIndicator, Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import Svg, { Circle } from "react-native-svg";
 import { useAuth } from "../contexts/AuthContext";
 import { useAttendance } from "../contexts/AttendanceContext";
 import { staffService } from "../services/staffService";
+import { documentService } from "../services/documentService";
+import Avatar from "../components/Avatar";
+import { pickImage } from "../utils/filePick";
+import { setMyLocalPhoto, usePhotoState } from "../utils/photoStore";
 import ModuleSheetHeader from "../components/ModuleSheetHeader";
 import { colors, radius, shadow } from "../theme/colors";
 import { formatTime, totalHours, workedMinutes } from "../utils/format";
@@ -19,10 +23,13 @@ function formatBirthday(b) {
 }
 
 export default function ProfileScreen() {
-  const { user, logout, hasLeft } = useAuth();
+  const { user, logout, hasLeft, reloadMyProfile, myProfile } = useAuth();
   const { attendance, loading: attendanceLoading } = useAttendance();
-  const [staff, setStaff] = useState(null);
+  // Start from the profile already loaded at login (instant), then refresh.
+  const [staff, setStaff] = useState(myProfile);
+  const { myLocal } = usePhotoState();
   const [, setTick] = useState(0);
+  const [photoBusy, setPhotoBusy] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -32,12 +39,58 @@ export default function ProfileScreen() {
         if (!cancelled) setStaff(res.data?.data || res.data || null);
       })
       .catch(() => {
-        if (!cancelled) setStaff(null);
+        // keep what we have (offline / server busy)
       });
     return () => {
       cancelled = true;
     };
   }, []);
+
+  const photoUrl = staff?.photoUrl || null;
+  const hasPhoto = !!(photoUrl || myLocal);
+
+  const refreshStaff = async () => {
+    const res = await staffService.getMyProfile();
+    setStaff(res.data?.data || res.data || null);
+    reloadMyProfile?.(); // Home header + cached profile pick up the new photo too
+  };
+
+  // Square crop → 512×512 JPEG → upload. Shown at once from the phone copy.
+  const pickPhoto = async () => {
+    try {
+      const file = await pickImage({ camera: false, square: true });
+      if (!file) return;
+      setPhotoBusy(true);
+      await documentService.uploadMine({ type: "photo", data: file.data, mimeType: file.mimeType, fileName: file.fileName });
+      setMyLocalPhoto(file.dataUri);
+      await refreshStaff();
+    } catch (e) {
+      Alert.alert("Upload failed", e?.response?.data?.message || e?.message || "Could not upload the photo.");
+    } finally {
+      setPhotoBusy(false);
+    }
+  };
+
+  const removePhoto = () =>
+    Alert.alert("Remove photo", "Remove your profile photo?", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Remove",
+        style: "destructive",
+        onPress: async () => {
+          try {
+            setPhotoBusy(true);
+            await documentService.deleteMine("photo");
+            setMyLocalPhoto(null);
+            await refreshStaff();
+          } catch (e) {
+            Alert.alert("Failed", e?.response?.data?.message || "Could not remove the photo.");
+          } finally {
+            setPhotoBusy(false);
+          }
+        },
+      },
+    ]);
 
   const live = !!attendance?.loginTime && !attendance?.logoutTime;
 
@@ -112,6 +165,30 @@ export default function ProfileScreen() {
             </TouchableOpacity>
           </View>
         )}
+
+        {/* Profile photo */}
+        <View style={[styles.card, { marginBottom: 12, alignItems: "center", paddingVertical: 20 }]}>
+          <TouchableOpacity onPress={pickPhoto} activeOpacity={0.8} disabled={photoBusy}>
+            <Avatar name={displayName} uri={photoUrl} size={96} self />
+            {photoBusy ? (
+              <View style={styles.photoBusy}>
+                <ActivityIndicator color="#fff" />
+              </View>
+            ) : null}
+          </TouchableOpacity>
+          <View style={{ flexDirection: "row", gap: 16, marginTop: 12 }}>
+            <TouchableOpacity onPress={pickPhoto} disabled={photoBusy}>
+              <Text style={{ color: colors.primary, fontWeight: "700", fontSize: 13 }}>
+                {hasPhoto ? "Change photo" : "Add photo"}
+              </Text>
+            </TouchableOpacity>
+            {hasPhoto ? (
+              <TouchableOpacity onPress={removePhoto} disabled={photoBusy}>
+                <Text style={{ color: colors.danger, fontWeight: "700", fontSize: 13 }}>Remove</Text>
+              </TouchableOpacity>
+            ) : null}
+          </View>
+        </View>
 
         {/* Details */}
         <View style={[styles.card, { marginTop: 12, paddingHorizontal: 18 }]}>
@@ -203,6 +280,14 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.border,
   },
   value: { fontSize: 13, fontWeight: "600", color: colors.text },
+  photoBusy: {
+    position: "absolute",
+    top: 0, left: 0, right: 0, bottom: 0,
+    borderRadius: 48,
+    backgroundColor: "rgba(0,0,0,0.4)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
   logoutPill: {
     alignItems: "center",
     justifyContent: "center",

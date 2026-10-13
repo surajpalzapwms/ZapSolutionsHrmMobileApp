@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "HRM App",
+    "name": "H.R.M. In A ZAP",
     "slug": "hrm-app",
     "version": "1.0.0",
     "web": {
@@ -18,7 +18,25 @@
         }
       ],
       "expo-status-bar",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow $(PRODUCT_NAME) to access your photos to set a profile picture.",
+          "cameraPermission": "Allow $(PRODUCT_NAME) to use the camera to take your profile photo and documents."
+        }
+      ],
       "expo-background-task",
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "H.R.M. In A ZAP uses your location to mark your attendance when you reach the office.",
+          "locationWhenInUsePermission": "H.R.M. In A ZAP uses your location to mark your attendance when you reach the office.",
+          "isAndroidBackgroundLocationEnabled": true,
+          "isIosBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true,
+          "locationAlwaysPermission": "H.R.M. In A ZAP uses your location in the background to mark your in-time and going-time automatically when you reach or leave the office."
+        }
+      ],
       [
         "expo-build-properties",
         {
@@ -35,7 +53,18 @@
       "**/*"
     ],
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "H.R.M. In A ZAP uses your location to mark your attendance when you reach the office.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "H.R.M. In A ZAP uses your location to mark your attendance when you reach the office.",
+        "UIBackgroundModes": [
+          "location",
+          "fetch"
+        ]
+      },
+      "entitlements": {
+        "com.apple.developer.networking.wifi-info": true
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -45,12 +74,34 @@
       "package": "com.anonymous.hrmapp",
       "permissions": [
         "ACCESS_NETWORK_STATE",
-        "ACCESS_WIFI_STATE"
+        "ACCESS_WIFI_STATE",
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION",
+        "FOREGROUND_SERVICE",
+        "FOREGROUND_SERVICE_LOCATION"
       ],
-      "versionCode": 1
+      "versionCode": 4
     },
     "extra": {
-      "apiUrl": "https://hrm.zapsolutionz.com"
+      "apiUrl": "https://hrm.zapsolutionz.com",
+      "office": {
+        "wifiNames": [
+          "PUT-OFFICE-WIFI-NAME-HERE"
+        ],
+        "location": null,
+        "autoSignIn": {
+          "from": "06:00",
+          "until": "22:00"
+        },
+        "lunch": {
+          "from": "13:00",
+          "until": "14:00"
+        },
+        "autoSignOut": {
+          "confirmMinutes": 10
+        }
+      }
     }
   }
 }

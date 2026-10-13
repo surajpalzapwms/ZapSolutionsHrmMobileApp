@@ -4,9 +4,13 @@
 //     taken, newest first) — never anyone else's. The request asks the
 //     server for this staff member only, and each record is checked again
 //     on the phone, so another person's advance can never be shown.
-//   • Admin / super-admin: every staff member's advances, with the name.
-import React, { useMemo } from "react";
-import { Text, View } from "react-native";
+//   • Admin: every staff member's advances, with the name.
+//   • Super admin: STAFF-WISE — each staff member with how much advance
+//     they were given (and still owe), the grand total on top; tap a
+//     person for every advance they took.
+import React, { useCallback, useMemo, useState } from "react";
+import { FlatList, RefreshControl, Text, View } from "react-native";
+import { BackLink, StaffRow, TotalsHeader, idOf as staffIdOf, useBackHandler, useStaffMap } from "../components/StaffWise";
 import { advanceService } from "../services/advanceService";
 import { useListLoader } from "../hooks/useListLoader";
 import { useAuth } from "../contexts/AuthContext";
@@ -38,8 +42,9 @@ const staffNameOf = (item) =>
   "Staff";
 
 export default function AdvanceListScreen() {
-  const { isAdmin, myProfile, profileLoading, user } = useAuth();
+  const { isAdmin, isSuperAdmin, myProfile, profileLoading, user } = useAuth();
 
+  if (isSuperAdmin) return <AdvanceByStaff />;
   if (isAdmin) return <AdvanceList key="all" />;
 
   const staffId = myProfile?._id || null;
@@ -109,6 +114,121 @@ function AdvanceList({ staffId = null, userId = null }) {
           />
         );
       }}
+    />
+  );
+}
+// ── Super admin: staff-wise ──────────────────────────────────────────────
+const isRejected = (a) => String(a.status || "").toLowerCase() === "rejected";
+const outstandingOf = (a) =>
+  isRejected(a) || String(a.status || "").toLowerCase() === "repaid"
+    ? 0
+    : Math.max(0, (Number(a.amount) || 0) - (Number(a.repaidAmount) || 0));
+
+function AdvanceByStaff() {
+  const loader = useListLoader(() => advanceService.getAll(), "Could not load advances.");
+  const { map } = useStaffMap(true);
+  const [openId, setOpenId] = useState(null);
+  const close = useCallback(() => setOpenId(null), []);
+  useBackHandler(!!openId, close);
+
+  const groups = useMemo(() => {
+    const by = new Map();
+    loader.items.forEach((a) => {
+      const id = staffIdOf(a.employeeId) || staffNameOf(a);
+      if (!by.has(id)) by.set(id, { id, name: staffNameOf(a), items: [], given: 0, outstanding: 0 });
+      const g = by.get(id);
+      g.items.push(a);
+      if (!isRejected(a)) g.given += Number(a.amount) || 0;
+      g.outstanding += outstandingOf(a);
+    });
+    const list = [...by.values()].map((g) => ({
+      ...g,
+      name: map[g.id]?.staffName || g.name,
+      photoUrl: map[g.id]?.photoUrl || null,
+      items: g.items.sort((a, b) => new Date(dateOf(b) || 0) - new Date(dateOf(a) || 0)),
+    }));
+    return list.sort((a, b) => b.given - a.given || a.name.localeCompare(b.name));
+  }, [loader.items, map]);
+
+  const totals = useMemo(
+    () => ({
+      given: groups.reduce((s, g) => s + g.given, 0),
+      outstanding: groups.reduce((s, g) => s + g.outstanding, 0),
+    }),
+    [groups],
+  );
+
+  if (loader.loading) return <Loading />;
+  const open = groups.find((g) => g.id === openId);
+
+  if (open) {
+    return (
+      <FlatList
+        style={{ flex: 1, backgroundColor: colors.screen }}
+        contentContainerStyle={{ padding: 16, paddingBottom: 40 }}
+        data={open.items}
+        keyExtractor={(a, i) => a._id || String(i)}
+        ListHeaderComponent={
+          <>
+            <BackLink label="All staff" onPress={close} />
+            <TotalsHeader
+              title={open.name}
+              items={[
+                { label: "Total given", value: formatMoney(open.given) },
+                { label: "Still to recover", value: formatMoney(open.outstanding) },
+                { label: "Advances", value: String(open.items.length) },
+              ]}
+            />
+          </>
+        }
+        renderItem={({ item }) => (
+          <ListItem
+            emoji="💵"
+            emojiBg="#FCE7F3"
+            title={dateOf(item) ? formatShortDate(dateOf(item)) : "Advance"}
+            subtitle={item.reason || undefined}
+            meta={Number(item.repaidAmount) ? `Repaid ${formatMoney(item.repaidAmount)}` : undefined}
+            right={
+              <View style={{ alignItems: "flex-end", gap: 6 }}>
+                <Text style={{ fontSize: 15, fontWeight: "800", color: colors.text }}>{formatMoney(item.amount)}</Text>
+                {item.status ? <Badge label={item.status} tone={toneForStatus(item.status)} /> : null}
+              </View>
+            }
+          />
+        )}
+      />
+    );
+  }
+
+  return (
+    <FlatList
+      style={{ flex: 1, backgroundColor: colors.screen }}
+      contentContainerStyle={{ padding: 16, paddingBottom: 40 }}
+      data={groups}
+      keyExtractor={(g) => g.id}
+      refreshControl={<RefreshControl refreshing={loader.refreshing} onRefresh={loader.refresh} tintColor={colors.primary} />}
+      ListHeaderComponent={
+        <TotalsHeader
+          title="All advances given (rejected not counted)"
+          items={[
+            { label: "Total given", value: formatMoney(totals.given) },
+            { label: "Still to recover", value: formatMoney(totals.outstanding) },
+            { label: "Staff", value: String(groups.length) },
+          ]}
+        />
+      }
+      ListEmptyComponent={<EmptyState emoji="💵" message={loader.error || "No advances given yet."} />}
+      renderItem={({ item: g }) => (
+        <StaffRow
+          name={g.name}
+          photoUrl={g.photoUrl}
+          subtitle={`${g.items.length} advance${g.items.length === 1 ? "" : "s"}`}
+          meta={g.outstanding ? `To recover ${formatMoney(g.outstanding)}` : "Fully recovered"}
+          amount={formatMoney(g.given)}
+          amountColor="#EA580C"
+          onPress={() => setOpenId(g.id)}
+        />
+      )}
     />
   );
 }
