@@ -181,6 +181,7 @@ export async function getPendingSalary({
         advance,
         estimate: true,
         payableDays: data?.payableDays,
+        unpaidDays: data?.unpaidLeaveDays || 0,
         totalDays: data?.totalDaysInMonth,
         record: null,
       });

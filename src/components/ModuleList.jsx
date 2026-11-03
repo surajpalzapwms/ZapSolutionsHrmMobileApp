@@ -12,6 +12,7 @@ export default function ModuleList({
   emptyMessage,
   ListHeaderComponent,
   keyExtractor,
+  extraData,
 }) {
   const { items, loading, refreshing, error, refresh } = loader;
 
@@ -22,6 +23,7 @@ export default function ModuleList({
     <FlatList
       style={{ flex: 1, backgroundColor: colors.screen }}
       data={items}
+      extraData={extraData}
       keyExtractor={keyExtractor || ((item, idx) => item._id || item.id || String(idx))}
       contentContainerStyle={{ padding: 16, paddingBottom: 40 }}
       showsVerticalScrollIndicator={false}

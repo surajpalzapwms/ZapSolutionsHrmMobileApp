@@ -1,5 +1,5 @@
 import React, { memo, useCallback, useEffect, useMemo, useState } from "react";
-import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator } from "react-native";
+import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, Alert } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { attendanceService } from "../services/attendanceService";
 import { holidayService } from "../services/holidayService";
@@ -10,12 +10,57 @@ import { useAuth } from "../contexts/AuthContext";
 import { useMySalary, clearSalaryCache } from "../hooks/useMySalary";
 import { staffService } from "../services/staffService";
 import { dateKeyFrom, hasLeftOrganization } from "../utils/staffStatus";
+import { formatClock } from "../utils/format";
 import MonthSummary from "./MonthSummary";
+import LateComingPanel, { lateState, mins } from "./LateComingPanel";
+import { lateDeductionService } from "../services/lateDeductionService";
+import { formatMoneyZero } from "../utils/format";
+import { weekendDays } from "../utils/tenant";
 
 const SHORT_MONTHS = MONTHS.map((m) => m.slice(0, 3));
 
-// "₹26,500" — compact amount for the small annual month headers.
-const shortMoney = (v) => `₹${Math.round(Number(v) || 0).toLocaleString("en-IN")}`;
+// "₹26,500.00" — amount for the small annual month headers (always 2 decimals).
+const shortMoney = (v) =>
+  formatMoneyZero(v);
+
+const DAY_LABELS = {
+  present: "Present",
+  half: "Half Day",
+  swap: "Swap Leave",
+  paid: "Paid Leave",
+  sick: "Sick Leave",
+  casual: "Casual Leave",
+  unpaid: "Unpaid Leave",
+  absent: "Absent",
+  holiday: "Holiday",
+};
+
+// Everything known about one date, shown in full when the date is tapped
+// (the website shows the same on hover).
+function showDayDetails(key, detail, status, late, lateEnabled) {
+  const lines = [];
+  lines.push(`Status: ${DAY_LABELS[status] || status || "—"}${detail?.isHalfDay ? " (Half Day)" : ""}`);
+  if (status === "holiday" && detail?.holidayName) lines.push(`Holiday: ${detail.holidayName}`);
+  if (detail?.isHalfDayTopUp)
+    lines.push(`Other half: ${DAY_LABELS[detail.topUpLeaveType] || detail.topUpLeaveType || "Leave"} (0.5 day)`);
+  if (detail?.loginTime || detail?.logoutTime) {
+    lines.push(`Sign in: ${formatClock(detail.loginTime)}`);
+    lines.push(`Sign out: ${detail.logoutTime ? formatClock(detail.logoutTime) : "--:--"}`);
+  }
+  if (late) {
+    const ls = lateState(late, lateEnabled);
+    lines.push("");
+    lines.push(`Signed in late: ${mins(late.lateMinutes)} (${late.bufferMinutes} min grace)`);
+    if (late.stayedLateMinutes > 0) lines.push(`Stayed after shift: ${mins(late.stayedLateMinutes)} extra`);
+    if (late.lunchCreditMinutes > 0) lines.push(`Lunch counted as work: ${mins(late.lunchCreditMinutes)}`);
+    if (late.pending) lines.push("Still signed in — can be made up today");
+    else if (late.deductibleMinutes > 0)
+      lines.push(`Deducted: ${mins(late.deductibleMinutes)} = ${shortMoney(late.amount)}`);
+    else lines.push("Fully made up — nothing deducted");
+    if (ls) lines.push(`Late status: ${ls.label}`);
+  }
+  Alert.alert(key, lines.join("\n"));
+}
 
 const STATUS_COLORS = {
   present: colors.success,
@@ -68,6 +113,28 @@ function toStatusMap(rawDays) {
   list.forEach((d) => {
     const key = String(d?.date || "").slice(0, 10);
     if (key && d.status) map[key] = d.status;
+  });
+  return map;
+}
+
+// Full day record per date (sign in/out, holiday name, half day…).
+function toDetailMap(rawDays) {
+  const list = Array.isArray(rawDays) ? rawDays : Object.values(rawDays || {});
+  const map = {};
+  list.forEach((d) => {
+    const key = String(d?.date || "").slice(0, 10);
+    if (key && d) map[key] = d;
+  });
+  return map;
+}
+
+// Late-coming info per date ("YYYY-MM-DD" -> late object from the backend).
+function toLateMap(rawDays) {
+  const list = Array.isArray(rawDays) ? rawDays : Object.values(rawDays || {});
+  const map = {};
+  list.forEach((d) => {
+    const key = String(d?.date || "").slice(0, 10);
+    if (key && d.late) map[key] = d.late;
   });
   return map;
 }
@@ -170,14 +237,27 @@ async function fetchPage(staffId, year, month /* number | "annual" */) {
   if (month === "annual") {
     const p = await fetchCalendar(staffId, { year, mode: "annual" });
     const maps = {};
+    const lateMaps = {};
+    const detailMaps = {};
+    const lateSummaries = {};
     (p.months || []).forEach((m) => {
       maps[m.month] = toStatusMap(m.days);
+      detailMaps[m.month] = toDetailMap(m.days);
+      lateMaps[m.month] = toLateMap(m.days);
+      if (m.lateSummary) lateSummaries[m.month] = m.lateSummary;
     });
-    return { maps, counts: pickCounts(p), paidLeaveValue: p.paidLeaveValue || {} };
+    return { maps, lateMaps, detailMaps, lateSummaries, counts: pickCounts(p), paidLeaveValue: p.paidLeaveValue || {} };
   }
   const p = await fetchCalendar(staffId, { year, month });
   // `paidLeaveValue` is keyed by month (0-11) — same field the website reads.
-  return { maps: { [month]: toStatusMap(p.days) }, counts: pickCounts(p), paidLeaveValue: p.paidLeaveValue || {} };
+  return {
+    maps: { [month]: toStatusMap(p.days) },
+    lateMaps: { [month]: toLateMap(p.days) },
+    detailMaps: { [month]: toDetailMap(p.days) },
+    lateSummaries: p.lateSummary ? { [month]: p.lateSummary } : {},
+    counts: pickCounts(p),
+    paidLeaveValue: p.paidLeaveValue || {},
+  };
 }
 
 // ── One month grid ───────────────────────────────────────────────────────
@@ -194,6 +274,9 @@ const MonthGrid = memo(function MonthGrid({
   salary,
   paidLeave,
   isLastMonth,
+  lateMap,
+  detailMap,
+  lateEnabled = true,
 }) {
   // Only the weeks inside the working period are drawn: days after the
   // last working (relieving) date are left out completely, and whole weeks
@@ -255,9 +338,14 @@ const MonthGrid = memo(function MonthGrid({
           <Text style={styles.miniTitle}>{SHORT_MONTHS[month]}</Text>
           {showSalary ? (
             <View style={{ alignItems: "flex-end", flexShrink: 1 }}>
-              <Text style={styles.miniSalaryText} numberOfLines={1}>
+              <Text style={styles.miniSalaryText} numberOfLines={1} adjustsFontSizeToFit>
                 Sal: <Text style={styles.miniSalaryValue}>{salary ? shortMoney(salary.netSalary) : "—"}</Text>
               </Text>
+              {Number(salary?.referralCommission) > 0 ? (
+                <Text style={[styles.miniSalaryText, { color: "#7E22CE" }]} numberOfLines={1} adjustsFontSizeToFit>
+                  {salary.referralOrganization || "Comm"}: <Text style={styles.miniSalaryValue}>{shortMoney(salary.referralCommission)}</Text>
+                </Text>
+              ) : null}
               {plText ? (
                 <Text style={styles.miniSalaryText} numberOfLines={1}>
                   PL: <Text style={styles.miniSalaryValue}>{plText}</Text>
@@ -289,11 +377,38 @@ const MonthGrid = memo(function MonthGrid({
           if ((minKey && key < minKey) || (maxKey && key > maxKey)) {
             return <View key={idx} style={cellStyle} />;
           }
-          // Backend status wins; otherwise Sundays and holidays show grey.
+          // Backend status wins; otherwise the weekly off day(s) and holidays show grey.
           const backendStatus = statusMap?.[key];
-          const isHolidayDay = col === 0 || holidaySet.has(key);
+          const isHolidayDay = weekendDays().includes(col) || holidaySet.has(key);
           const status = backendStatus || (isHolidayDay ? "holiday" : null);
           const bg = status ? STATUS_COLORS[status] || colors.paidLeave : null;
+          // Late coming: small coloured dot (red deducted, green made up,
+          // grey waived/off, amber pending). Tap the date for details.
+          const late = lateMap?.[key];
+          const ls = late ? lateState(late, lateEnabled) : null;
+          // Every coloured date can be tapped to see ALL its details
+          // (status, sign in/out, holiday, late coming with grace, extra
+          // time stayed and the ₹ deducted) — nothing is cut short.
+          if (status) {
+            return (
+              <TouchableOpacity
+                key={idx}
+                activeOpacity={0.7}
+                onPress={() => showDayDetails(key, detailMap?.[key], status, late, lateEnabled)}
+                style={[cellStyle, styles.dateCell, bg && { backgroundColor: bg }, key === todayKey && styles.todayCell]}
+              >
+                <Text style={[textStyle, bg && styles.cellTextOnColor]}>{day}</Text>
+                {ls ? (
+                  <View
+                    style={[
+                      compact ? styles.lateDotMini : styles.lateDot,
+                      { backgroundColor: ls.color },
+                    ]}
+                  />
+                ) : null}
+              </TouchableOpacity>
+            );
+          }
           return (
             <View
               key={idx}
@@ -315,7 +430,7 @@ export default function AttendanceCalendar({ staffId, staff, staffName }) {
   // Salary / Paid Leave / Advance figures and the working-period limits come
   // from the Staff record: your own (no staffId), or — for an admin viewing
   // someone — the `staff` record passed in.
-  const { myProfile, hasLeft: myHasLeft } = useAuth();
+  const { myProfile, hasLeft: myHasLeft, isSuperAdmin, isViewOnly } = useAuth();
   const own = !staffId;
   const profile = own ? myProfile : staff || null;
   const employeeId = own ? myProfile?._id || null : staffId;
@@ -362,6 +477,8 @@ export default function AttendanceCalendar({ staffId, staff, staffName }) {
   // The page on screen is read straight from the cache, so a month you
   // already opened shows instantly; `tick` re-renders when a fetch lands.
   const [, setTick] = useState(0);
+  // Bumped after a late-coming change so the page on screen is refetched.
+  const [reloadNonce, setReloadNonce] = useState(0);
   const [errors, setErrors] = useState({}); // pageKey -> message
   const page = calendarCache.get(pageKey) || null;
   const loading = !page && !errors[pageKey];
@@ -384,7 +501,7 @@ export default function AttendanceCalendar({ staffId, staff, staffName }) {
     return () => {
       cancelled = true;
     };
-  }, [pageKey, staffId, year, pageMonth]);
+  }, [pageKey, staffId, year, pageMonth, reloadNonce]);
 
   // Holidays + Saturday holidays for the year on screen (cached).
   const [holidaySet, setHolidaySet] = useState(() => new Set());
@@ -472,6 +589,57 @@ export default function AttendanceCalendar({ staffId, staff, staffName }) {
 
   const counts = page?.counts || null;
   const plByMonth = page?.paidLeaveValue || {};
+  const lateMaps = page?.lateMaps || {};
+  const lateSummaries = page?.lateSummaries || {};
+
+  // ── Late coming: super admin switches (month / single date) ───────────
+  const lateStaffId = staffId || employeeId;
+  const canEditLate = !!isSuperAdmin && !isViewOnly && !!lateStaffId;
+  const [lateBusy, setLateBusy] = useState(false);
+  const afterLateChange = useCallback(() => {
+    // Drop this page + salary figures so both come back fresh.
+    calendarCache.delete(pageKey);
+    clearSalaryCache();
+    setReloadNonce((n) => n + 1);
+    if (viewMode === "month") loadSalary(monthCursor.getMonth());
+  }, [pageKey, viewMode, loadSalary, monthCursor]);
+  const runLateChange = useCallback(
+    async (fn, okMsg) => {
+      setLateBusy(true);
+      try {
+        await fn();
+        afterLateChange();
+      } catch (e) {
+        Alert.alert("Late coming", e.response?.data?.message || "Could not save the change.");
+      } finally {
+        setLateBusy(false);
+      }
+    },
+    [afterLateChange],
+  );
+  const onLateMonthToggle = useCallback(
+    (deductLate) =>
+      runLateChange(() =>
+        lateDeductionService.setMonth({
+          staffId: lateStaffId,
+          period: monthKeyOf(monthCursor.getFullYear(), monthCursor.getMonth()),
+          deductLate,
+        }),
+      ),
+    [runLateChange, lateStaffId, monthCursor],
+  );
+  const onLateDayToggle = useCallback(
+    (date, waived) => runLateChange(() => lateDeductionService.setDay({ staffId: lateStaffId, date, waived })),
+    [runLateChange, lateStaffId],
+  );
+
+  const onLateLunchChange = useCallback(
+    (date, lunchSkipped, lunchTakenMinutes = null) =>
+      runLateChange(() =>
+        lateDeductionService.setLunch({ staffId: lateStaffId, date, lunchSkipped, lunchTakenMinutes }),
+      ),
+    [runLateChange, lateStaffId],
+  );
 
   return (
     <View>
@@ -497,6 +665,20 @@ export default function AttendanceCalendar({ staffId, staff, staffName }) {
 
       <View style={styles.wrap}>
         {staffName ? <Text style={styles.headerTitle}>{staffName}</Text> : null}
+        {profile?.referral?.organizationName && Number(profile.referral.commissionPercent) > 0 ? (
+          <Text style={{ fontSize: 12, color: "#7E22CE", fontWeight: "600", marginBottom: 6 }}>
+            Referred by {profile.referral.organizationName}
+            <Text style={{ color: colors.textMuted, fontWeight: "400" }}>
+              {" "}· {Number(profile.referral.commissionPercent).toFixed(2)}% commission from first month salary
+              {(() => {
+                const p = joinKey ? joinKey.slice(0, 7) : ""; // first month only
+                if (!p) return "";
+                const [y, m] = p.split("-").map(Number);
+                return ` (${SHORT_MONTHS[m - 1]} ${y})`;
+              })()}
+            </Text>
+          </Text>
+        ) : null}
         {loading && !page ? <ActivityIndicator color={colors.primary} style={{ marginBottom: 8 }} /> : null}
         {error ? <Text style={styles.error}>{error}</Text> : null}
 
@@ -505,6 +687,9 @@ export default function AttendanceCalendar({ staffId, staff, staffName }) {
             year={monthCursor.getFullYear()}
             month={monthCursor.getMonth()}
             statusMap={page?.maps?.[monthCursor.getMonth()]}
+            lateMap={lateMaps[monthCursor.getMonth()]}
+            detailMap={page?.detailMaps?.[monthCursor.getMonth()]}
+            lateEnabled={lateSummaries[monthCursor.getMonth()]?.enabled !== false}
             holidaySet={holidaySet}
             todayKey={todayKey}
             compact={false}
@@ -519,6 +704,9 @@ export default function AttendanceCalendar({ staffId, staff, staffName }) {
                 year={yearCursor}
                 month={m}
                 statusMap={page?.maps?.[m]}
+                lateMap={lateMaps[m]}
+                detailMap={page?.detailMaps?.[m]}
+                lateEnabled={lateSummaries[m]?.enabled !== false}
                 holidaySet={holidaySet}
                 todayKey={todayKey}
                 compact
@@ -538,7 +726,8 @@ export default function AttendanceCalendar({ staffId, staff, staffName }) {
         ) : null}
 
         {viewMode === "month" ? (
-          employeeId ? (
+          <>
+          {employeeId ? (
             // Month view: legend on the LEFT, this month's summary on the RIGHT.
             <View style={styles.monthFooter}>
               <View style={styles.legendCol}>
@@ -555,12 +744,26 @@ export default function AttendanceCalendar({ staffId, staff, staffName }) {
                   advancesLoading={advancesLoading}
                   isRelievingMonth={isRelievingMonth}
                   finalPaidLeave={finalPaidLeave}
+                  referral={profile?.referral}
+                  joinKey={joinKey}
+                  period={`${monthCursor.getFullYear()}-${String(monthCursor.getMonth() + 1).padStart(2, "0")}`}
+                  adminView={!own}
                 />
               </View>
             </View>
           ) : (
             <Legend />
-          )
+          )}
+          <LateComingPanel
+            summary={lateSummaries[monthCursor.getMonth()] || null}
+            monthLabel={`${SHORT_MONTHS[monthCursor.getMonth()]} ${monthCursor.getFullYear()}`}
+            canEdit={canEditLate}
+            busy={lateBusy}
+            onToggleMonth={onLateMonthToggle}
+            onToggleDay={onLateDayToggle}
+            onChangeLunch={onLateLunchChange}
+          />
+          </>
         ) : (
           <>
             {counts ? (
@@ -727,6 +930,25 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   miniCellText: { fontSize: 8, color: colors.text },
+  // Late-coming marker (bottom-right corner of a date).
+  lateDot: {
+    position: "absolute",
+    right: 3,
+    bottom: 3,
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: "#fff",
+  },
+  lateDotMini: {
+    position: "absolute",
+    right: 1,
+    bottom: 1,
+    width: 4,
+    height: 4,
+    borderRadius: 2,
+  },
   miniSalaryText: { fontSize: 9, color: colors.textMuted, fontWeight: "600" },
   miniSalaryValue: { fontSize: 9, color: colors.text, fontWeight: "800" },
 });

@@ -69,4 +69,5 @@ export const SHORT_MONTHS = [
 export const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 export const SHORT_DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 // App name shown under the phone icon (app.json → expo.name) and on Login.
-export const APP_NAME = "H.R.M. In A ZAP";
+export const APP_NAME = "HRM-EOVO";
+export const APP_TAGLINE = "Effective Oriented Virtual Outstanding";

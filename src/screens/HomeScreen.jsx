@@ -23,12 +23,16 @@ import AdvanceListScreen from "./AdvanceListScreen";
 import ExpensesListScreen from "./ExpensesListScreen";
 import { SettlementCard, SettlementStatement } from "../components/Settlement";
 import LetterScreen from "./LetterScreen";
+import AdminLettersScreen from "./AdminLettersScreen";
 import { LETTER_TYPES } from "../utils/letters";
 import { getMyLetters } from "../services/letterService";
 import MyDocumentsScreen from "./MyDocumentsScreen";
 import ResignScreen from "./ResignScreen";
+import AdminResignationsScreen from "./AdminResignationsScreen";
 import PendingSalaryScreen from "./PendingSalaryScreen";
 import { cacheGet, cacheLoad, cacheSet } from "../utils/appCache";
+import { getCountry } from "../config/tenants";
+import ViewOnlyBanner from "../components/ViewOnlyBanner";
 
 const LETTERS_CACHE = "myLetters";
 
@@ -60,6 +64,9 @@ const QUICK_ACTIONS = [
   { key: "Settlement", label: "Settlement", emoji: "📄", bg: BG.indigo, sheet: SettlementStatement, onlyIfLeft: true },
   { key: "Documents", label: "My Documents", emoji: "🪪", bg: BG.emerald, sheet: MyDocumentsScreen },
   { key: "Resign", label: "Resign", emoji: "📝", bg: BG.pink, sheet: ResignScreen, hideIfLeft: true, staffOnly: true },
+  // Admin / super admin: review every staff member's resignation (approve /
+  // reject) - same as the website's Resignations page.
+  { key: "Resignations", label: "Resignations", emoji: "📝", bg: BG.pink, sheet: AdminResignationsScreen, adminOnly: true, tabKey: "resignations" },
   // Pending Amount — right after Resign. Stays visible after the staff member
   // has resigned / been relieved, so they can still see what is owed to them.
   { key: "PendingAmount", label: "Pending Amount", emoji: "⌛", bg: BG.amber, sheet: PendingSalaryScreen },
@@ -74,7 +81,7 @@ function OfficeWifiSheet() {
 }
 
 export default function HomeScreen({ navigation }) {
-  const { user, isAdmin, isSuperAdmin, canAccess, hasLeft, myProfile } = useAuth();
+  const { user, isAdmin, isSuperAdmin, isViewOnly, canAccess, hasLeft, myProfile, myPhotoUrl, tenant, leaveCompany } = useAuth();
   const {
     attendance,
     loading,
@@ -105,6 +112,9 @@ export default function HomeScreen({ navigation }) {
   }, []);
 
   const loadLetters = useCallback(() => {
+    // Admin / super admin: letters are never locked (they open the
+    // generate screen), so there is nothing to ask the server for.
+    if (isAdmin) return;
     getMyLetters()
       .then((map) => {
         setLetterStatus(map);
@@ -113,7 +123,7 @@ export default function HomeScreen({ navigation }) {
       .catch(() => {
         // keep the last known state
       });
-  }, []);
+  }, [isAdmin]);
 
   // Refresh whenever Home comes into focus, so a letter HR just generated
   // shows up enabled without restarting the app.
@@ -150,7 +160,11 @@ export default function HomeScreen({ navigation }) {
   const open = actions.find((a) => a.key === openKey);
   const SheetContent = open?.sheet;
 
-  const isLetterEnabled = (action) => Boolean(letterStatus[action.key]?.available);
+  // Admin / super admin: letter tiles are NEVER locked — they open the
+  // "Generate letter" screen (pick any staff member, generate all six
+  // letters, same as the website). Staff: a tile stays locked until HR has
+  // generated that letter for them.
+  const isLetterEnabled = (action) => isAdmin || Boolean(letterStatus[action.key]?.available);
 
   const onAction = (action) => {
     if (action.letter) {
@@ -180,7 +194,7 @@ export default function HomeScreen({ navigation }) {
       >
         {/* Header */}
         <LinearGradient
-          colors={[colors.headerFrom, colors.headerTo]}
+          colors={[colors.headerFrom, colors.headerVia, colors.headerTo]}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
           style={{
@@ -209,7 +223,7 @@ export default function HomeScreen({ navigation }) {
                   overflow: "hidden",
                 }}
               >
-                <Avatar name={user?.name} uri={myProfile?.photoUrl} size={44} self />
+                <Avatar name={user?.name} uri={myPhotoUrl} size={44} self />
               </View>
             </TouchableOpacity>
           </View>
@@ -217,7 +231,35 @@ export default function HomeScreen({ navigation }) {
           <Text style={{ fontSize: 20, fontWeight: "700", color: "#fff", marginTop: 6 }}>
             Welcome back, {name.split(" ")[0]}! 👋
           </Text>
+          {/* Which company + country this dashboard belongs to. */}
+          {tenant ? (
+            <Text style={{ fontSize: 12, fontWeight: "600", color: "rgba(255,255,255,0.8)", marginTop: 2 }}>
+              {tenant.companyName}{tenant.country ? ` · ${getCountry(tenant.country).flag} ${getCountry(tenant.country).name}` : ""}
+            </Text>
+          ) : null}
+          {/* Super admin: back to the list of all companies. */}
+          {isSuperAdmin ? (
+            <TouchableOpacity
+              onPress={() => leaveCompany()}
+              activeOpacity={0.8}
+              style={{
+                alignSelf: "flex-start",
+                marginTop: 8,
+                paddingHorizontal: 12,
+                paddingVertical: 6,
+                borderRadius: radius.pill,
+                backgroundColor: "rgba(255,255,255,0.18)",
+                borderWidth: 1,
+                borderColor: "rgba(255,255,255,0.3)",
+              }}
+            >
+              <Text style={{ fontSize: 12, fontWeight: "700", color: "#fff" }}>⇄ Change company</Text>
+            </TouchableOpacity>
+          ) : null}
         </LinearGradient>
+
+        {/* Super admin inside a client company: look, don't touch. */}
+        {isViewOnly ? <ViewOnlyBanner /> : null}
 
         {hasLeft ? (
           <View style={{ marginHorizontal: 16, marginTop: 8 }}>
@@ -375,10 +417,20 @@ export default function HomeScreen({ navigation }) {
 
       <QuickActionSheet
         visible={!!letterKey}
-        title={LETTER_TYPES.find((l) => l.key === letterKey)?.label || ""}
+        title={isAdmin ? "Generate Letters" : LETTER_TYPES.find((l) => l.key === letterKey)?.label || ""}
         onClose={() => setLetterKey(null)}
       >
-        {letterKey ? <LetterScreen type={letterKey} /> : null}
+        {letterKey ? (
+          isAdmin ? (
+            <AdminLettersScreen initialType={letterKey} />
+          ) : (
+            <LetterScreen
+              type={letterKey}
+              issuedAt={letterStatus[letterKey]?.issuedAt}
+              issuedByName={letterStatus[letterKey]?.issuedByName}
+            />
+          )
+        ) : null}
       </QuickActionSheet>
     </View>
   );

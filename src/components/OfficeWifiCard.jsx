@@ -10,9 +10,12 @@ import React, { useCallback, useEffect, useState } from "react";
 import { ActivityIndicator, Alert, Text, TouchableOpacity, View } from "react-native";
 import { getWifiInfo, WIFI_REASON_TEXT } from "../utils/wifi";
 import { presenceService } from "../services/presenceService";
+import { useAuth } from "../contexts/AuthContext";
 import { colors, radius, shadow } from "../theme/colors";
 
 export default function OfficeWifiCard() {
+  // View-only (super admin inside a client company): the list is shown, nothing can change.
+  const { isViewOnly } = useAuth();
   const [busy, setBusy] = useState(false);
   const [info, setInfo] = useState(null); // GET /api/presence/office-networks
   const [current, setCurrent] = useState(null); // { ssid, bssid, reason }
@@ -106,13 +109,15 @@ export default function OfficeWifiCard() {
           style={{ marginTop: 6, flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}
         >
           <Text style={{ fontSize: 12, color: colors.text }}>• {w.ssid}</Text>
-          <TouchableOpacity onPress={() => remove(w)}>
-            <Text style={{ fontSize: 12, fontWeight: "700", color: "#DC2626" }}>Remove</Text>
-          </TouchableOpacity>
+          {isViewOnly ? null : (
+            <TouchableOpacity onPress={() => remove(w)}>
+              <Text style={{ fontSize: 12, fontWeight: "700", color: "#DC2626" }}>Remove</Text>
+            </TouchableOpacity>
+          )}
         </View>
       ))}
 
-      {!currentSaved ? (
+      {!currentSaved && !isViewOnly ? (
         <TouchableOpacity
           onPress={saveCurrent}
           disabled={busy}

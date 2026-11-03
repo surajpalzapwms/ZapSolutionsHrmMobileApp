@@ -2,7 +2,11 @@
 import api from "../utils/api";
 
 export const staffService = {
+  // Staff for every screen EXCEPT the Staff tab: staff an admin has disabled are
+  // left out by the server.
   getAll: () => api.get("/api/staff"),
+  // Staff tab only: everyone, including disabled staff (so they can be enabled again).
+  getAllIncludingHidden: () => api.get("/api/staff", { params: { includeHidden: true } }),
   getById: (id) => api.get(`/api/staff/${id}`),
   create: (data) => api.post("/api/staff", data),
   update: (id, data) => api.put(`/api/staff/${id}`, data),
@@ -18,4 +22,7 @@ export const staffService = {
   // Full & Final Settlement Statement (same endpoint the website uses).
   // For a staff member who has left, `id` is their own Staff _id.
   getSettlement: (id) => api.get(`/api/staff/${id}/settlement`),
+  // Referral organisation + first-month commission (super admin only).
+  setReferral: (id, data) => api.put(`/api/staff/${id}/referral`, data),
+  clearReferral: (id) => api.delete(`/api/staff/${id}/referral`),
 };

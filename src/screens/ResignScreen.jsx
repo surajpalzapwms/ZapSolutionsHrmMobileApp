@@ -13,6 +13,17 @@ import { colors, radius } from "../theme/colors";
 const NOTICE_DAYS = 30;
 const ymdFromServer = (v) => (v ? String(v).slice(0, 10) : "");
 
+// Past last-working-days are allowed (e.g. someone who already left on
+// 10 Sep), but only up to a year back - same limit as the server.
+const MAX_BACKDATE_DAYS = 365;
+
+// When an admin rejects with remarks the server stores "reason [Admin: remarks]".
+// Split them so we can show "your reason" and "admin remarks" separately.
+const splitAdminRemarks = (reason = "") => {
+  const m = String(reason).match(/^([\s\S]*?)\s*\[Admin:\s*([\s\S]*?)\]\s*$/);
+  return m ? { text: m[1].trim(), remarks: m[2].trim() } : { text: String(reason).trim(), remarks: "" };
+};
+
 const daysFromToday = (ymd) => {
   const [y, m, d] = ymd.split("-").map(Number);
   const t = new Date();
@@ -29,6 +40,11 @@ export default function ResignScreen() {
   const [error, setError] = useState("");
 
   const today = ymdOf(new Date());
+  const earliest = (() => {
+    const d = new Date();
+    d.setDate(d.getDate() - MAX_BACKDATE_DAYS);
+    return ymdOf(d);
+  })();
   const suggested = (() => {
     const d = new Date();
     d.setDate(d.getDate() + NOTICE_DAYS);
@@ -58,29 +74,37 @@ export default function ResignScreen() {
     setError("");
     if (!lastDay) return setError("Please choose your last working day.");
     if (!reason.trim()) return setError("Please write a reason.");
-    Alert.alert("Submit resignation?", `Last working day: ${prettyYMD(lastDay)}`, [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Submit",
-        style: "destructive",
-        onPress: async () => {
-          setBusy(true);
-          try {
-            const res = await api.post("/api/hrm/resignations/me", {
-              lastWorkingDay: lastDay,
-              reason: reason.trim(),
-              noticePeriodDays: NOTICE_DAYS,
-            });
-            setResignation(res.data?.data || null);
-            setReason("");
-          } catch (e) {
-            setError(e.response?.data?.message || "Could not submit.");
-          } finally {
-            setBusy(false);
-          }
+    const isPast = lastDay < today;
+    Alert.alert(
+      "Submit resignation?",
+      isPast
+        ? `Last working day: ${prettyYMD(lastDay)}\n\nThis date has already passed. If your admin approves, you will be marked as having left on this date.`
+        : `Last working day: ${prettyYMD(lastDay)}`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Submit",
+          style: "destructive",
+          onPress: async () => {
+            setBusy(true);
+            try {
+              const res = await api.post("/api/hrm/resignations/me", {
+                lastWorkingDay: lastDay,
+                reason: reason.trim(),
+                noticePeriodDays: NOTICE_DAYS,
+              });
+              setResignation(res.data?.data || null);
+              setReason("");
+              reloadMyProfile?.();
+            } catch (e) {
+              setError(e.response?.data?.message || "Could not submit.");
+            } finally {
+              setBusy(false);
+            }
+          },
         },
-      },
-    ]);
+      ],
+    );
   };
 
   const withdraw = () => {
@@ -110,6 +134,7 @@ export default function ResignScreen() {
   // the staff member can apply again (the apply form below stays visible).
   const active = resignation && ["pending", "approved"].includes(resignation.status);
   const rejected = resignation?.status === "rejected";
+  const parts = splitAdminRemarks(resignation?.reason);
   const lwd = ymdFromServer(resignation?.lastWorkingDay);
   const left = lwd ? daysFromToday(lwd) : null;
 
@@ -147,8 +172,14 @@ export default function ResignScreen() {
                 />
               )}
             </View>
-            {resignation.reason ? (
-              <Text style={{ fontSize: 13, color: colors.text, marginTop: 14, lineHeight: 19 }}>{resignation.reason}</Text>
+            {parts.text ? (
+              <Text style={{ fontSize: 13, color: colors.text, marginTop: 14, lineHeight: 19 }}>{parts.text}</Text>
+            ) : null}
+            {rejected && parts.remarks ? (
+              <View style={{ marginTop: 12, backgroundColor: colors.dangerSoft, borderRadius: radius.md, padding: 12 }}>
+                <Text style={{ fontSize: 11, fontWeight: "700", color: colors.danger }}>Admin remarks</Text>
+                <Text style={{ fontSize: 13, color: colors.text, marginTop: 3, lineHeight: 19 }}>{parts.remarks}</Text>
+              </View>
             ) : null}
             {rejected ? (
               <Text style={{ fontSize: 12, color: colors.danger, marginTop: 12 }}>
@@ -181,11 +212,16 @@ export default function ResignScreen() {
               label="Last working day"
               value={lastDay}
               onChange={setLastDay}
-              minDate={today}
+              minDate={earliest}
             />
             <Text style={{ fontSize: 11, color: colors.textMuted, marginTop: 6 }}>
               Notice period is {NOTICE_DAYS} days — suggested last day {prettyYMD(suggested)}.
             </Text>
+            {lastDay && lastDay < today ? (
+              <Text style={{ fontSize: 11, color: colors.warning, marginTop: 6 }}>
+                This date has already passed. Once your admin approves, you will be marked as having left on this date.
+              </Text>
+            ) : null}
             <Text style={{ fontSize: 12, fontWeight: "600", color: colors.textMuted, marginTop: 14, marginBottom: 6 }}>Reason</Text>
             <TextInput
               value={reason}

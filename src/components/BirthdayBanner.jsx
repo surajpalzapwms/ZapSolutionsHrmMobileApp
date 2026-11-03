@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, AppState, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, AppState, ImageBackground, Text, TouchableOpacity, View } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 
 import { getYearBirthdays, getYearHolidays } from '../services/celebrationService';
@@ -7,6 +7,8 @@ import QuickActionSheet from './QuickActionSheet';
 import Avatar from './Avatar';
 import HolidaysListScreen from '../screens/HolidaysListScreen';
 import BirthdaysListScreen from '../screens/BirthdaysListScreen';
+import { WishButton } from './BirthdayRow';
+import { MyWishesModal } from './BirthdayWishModal';
 import { colors, radius, shadow } from '../theme/colors';
 import { cacheGet, cacheLoad, cacheSet } from '../utils/appCache';
 
@@ -36,15 +38,34 @@ function countdown(daysUntil) {
 }
 
 // Holiday = green, Birthday = pink.
+// Background picture for the "Upcoming Holiday" card only.
+const HOLIDAY_BG = require('../../assets/images/holiday-bg.png');
+
 const THEMES = {
   holiday: { bg: '#ECFDF5', border: '#A7F3D0', title: '#065F46', accent: '#047857', emoji: '🎊' },
   birthday: { bg: '#FDF2F8', border: '#FBCFE8', title: '#9D174D', accent: '#BE185D', emoji: '🎂' },
 };
 
+// A saved copy from yesterday must not show yesterday's "Today" birthday
+// (or miss today's): recount the days from each date and drop past ones.
+function freshen(list) {
+  if (!Array.isArray(list)) return [];
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  return list
+    .map((b) => {
+      const [y, m, d] = String(b.date || '').slice(0, 10).split('-').map(Number);
+      if (!y) return b;
+      const daysUntil = Math.round((new Date(y, m - 1, d).getTime() - today) / 86400000);
+      return daysUntil === b.daysUntil ? b : { ...b, daysUntil, wishedByMe: daysUntil === 0 ? b.wishedByMe : false };
+    })
+    .filter((b) => b.daysUntil >= 0);
+}
+
 export default function BirthdayBanner({ user, refreshKey = 0 }) {
   // Last saved copy first (instant Home), then fresh data from the server.
   const cached = cacheGet(CACHE_KEY);
-  const [birthdays, setBirthdays] = useState(() => cached?.birthdays || []);
+  const [birthdays, setBirthdays] = useState(() => freshen(cached?.birthdays));
   const [holidays, setHolidays] = useState(() => cached?.holidays || []);
   const [loading, setLoading] = useState(() => !cached);
   // 'holidays' | 'birthdays' | null — which full list sheet is open.
@@ -55,7 +76,7 @@ export default function BirthdayBanner({ user, refreshKey = 0 }) {
     let cancelled = false;
     cacheLoad(CACHE_KEY).then((saved) => {
       if (cancelled || !saved) return;
-      setBirthdays((cur) => (cur.length ? cur : saved.birthdays || []));
+      setBirthdays((cur) => (cur.length ? cur : freshen(saved.birthdays)));
       setHolidays((cur) => (cur.length ? cur : saved.holidays || []));
       setLoading(false);
     });
@@ -111,6 +132,23 @@ export default function BirthdayBanner({ user, refreshKey = 0 }) {
     if (refreshKey) load(true);
   }, [refreshKey, load]);
 
+  // At 12:00 midnight reload, so today's birthday (with its 🎉 Wish button)
+  // shows up on time even if the app was left open on Home.
+  useEffect(() => {
+    let timer;
+    const arm = () => {
+      const now = new Date();
+      const next = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 5);
+      timer = setTimeout(() => {
+        setBirthdays((cur) => freshen(cur));
+        load(true);
+        arm();
+      }, Math.max(next - now, 60000));
+    };
+    arm();
+    return () => clearTimeout(timer);
+  }, [load]);
+
   useEffect(() => {
     const sub = AppState.addEventListener('change', (st) => {
       if (st === 'active') load();
@@ -135,7 +173,17 @@ export default function BirthdayBanner({ user, refreshKey = 0 }) {
 
   return (
     <View style={{ marginBottom: 4 }}>
-      <BirthdayHighlight today={bdayToday} isMine={isMine} />
+      <BirthdayHighlight
+        today={bdayToday}
+        isMine={isMine}
+        onWished={(updated) => {
+          setBirthdays((cur) => {
+            const next = cur.map((b) => (String(b.id) === String(updated.id) ? { ...b, ...updated } : b));
+            cacheSet(CACHE_KEY, { birthdays: next, holidays }, { persist: true });
+            return next;
+          });
+        }}
+      />
 
       {/* One card, two buttons */}
       <View
@@ -152,6 +200,7 @@ export default function BirthdayBanner({ user, refreshKey = 0 }) {
         <UpcomingButton
           label="Upcoming Holiday"
           theme={THEMES.holiday}
+          bgImage={HOLIDAY_BG}
           count={holidays.length}
           nextTitle={nextHoliday?.name}
           nextDate={nextHoliday && dateRange(nextHoliday.date, nextHoliday.endDate)}
@@ -251,8 +300,18 @@ function BirthdayFaces({ people, isMine, theme, count }) {
   );
 }
 
-function UpcomingButton({ label, theme, count, nextTitle, nextDate, nextWhen, empty, onPress, people = null, isMine }) {
+function UpcomingButton({ label, theme, count, nextTitle, nextDate, nextWhen, empty, onPress, people = null, isMine, bgImage = null }) {
   const hasFaces = Array.isArray(people) && people.length > 0;
+  // With a background picture (Holiday card) the text turns white so it
+  // reads on the photo; a dark tint sits between the photo and the text.
+  const onPhoto = !!bgImage;
+  const Wrap = onPhoto ? ImageBackground : View; // Birthday card stays a plain View
+  const muted = onPhoto ? '#fff' : colors.textMuted;
+  const titleColor = onPhoto ? '#fff' : theme.title;
+  const accent = onPhoto ? '#FDE68A' : theme.accent;
+  const shade = onPhoto
+    ? { textShadowColor: 'rgba(0,0,0,0.55)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3 }
+    : null;
   return (
     <TouchableOpacity
       activeOpacity={0.8}
@@ -263,10 +322,17 @@ function UpcomingButton({ label, theme, count, nextTitle, nextDate, nextWhen, em
         borderRadius: radius.lg,
         borderWidth: 1,
         borderColor: theme.border,
-        paddingVertical: 14,
-        paddingHorizontal: 10,
-        alignItems: 'center',
+        overflow: 'hidden',
       }}>
+      <Wrap
+        {...(onPhoto ? { source: bgImage, resizeMode: 'cover' } : {})}
+        style={{ flex: 1, paddingVertical: 14, paddingHorizontal: 10, alignItems: 'center' }}>
+      {onPhoto && (
+        <View
+          pointerEvents="none"
+          style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(30,16,70,0.38)' }}
+        />
+      )}
       {hasFaces ? (
         <BirthdayFaces people={people} isMine={isMine} theme={theme} count={count} />
       ) : (
@@ -301,7 +367,7 @@ function UpcomingButton({ label, theme, count, nextTitle, nextDate, nextWhen, em
       </View>
       )}
 
-      <Text style={{ fontSize: 14, fontWeight: '800', color: theme.title, textAlign: 'center' }}>
+      <Text style={[{ fontSize: 14, fontWeight: '800', color: titleColor, textAlign: 'center' }, shade]}>
         {label}
       </Text>
 
@@ -309,15 +375,15 @@ function UpcomingButton({ label, theme, count, nextTitle, nextDate, nextWhen, em
         <>
           <Text
             numberOfLines={1}
-            style={{ fontSize: 12, fontWeight: '600', color: colors.textMuted, marginTop: 6, textAlign: 'center' }}>
+            style={[{ fontSize: 12, fontWeight: '600', color: muted, marginTop: 6, textAlign: 'center' }, shade]}>
             Next: {nextTitle}
           </Text>
           <Text
             numberOfLines={1}
-            style={{ fontSize: 11, color: colors.textMuted, marginTop: 2, textAlign: 'center' }}>
+            style={[{ fontSize: 11, color: muted, marginTop: 2, textAlign: 'center' }, shade]}>
             {nextDate}
           </Text>
-          <Text style={{ fontSize: 11, fontWeight: '700', color: theme.accent, marginTop: 2 }}>{nextWhen}</Text>
+          <Text style={[{ fontSize: 11, fontWeight: '700', color: accent, marginTop: 2 }, shade]}>{nextWhen}</Text>
           {/* Names of everyone else coming up (their photos are at the top). */}
           {hasFaces && people.length > 1 && (
             <Text
@@ -331,16 +397,21 @@ function UpcomingButton({ label, theme, count, nextTitle, nextDate, nextWhen, em
           )}
         </>
       ) : (
-        <Text style={{ fontSize: 12, color: colors.textMuted, marginTop: 6, textAlign: 'center' }}>{empty}</Text>
+        <Text style={[{ fontSize: 12, color: muted, marginTop: 6, textAlign: 'center' }, shade]}>{empty}</Text>
       )}
 
-      <Text style={{ fontSize: 12, fontWeight: '700', color: theme.accent, marginTop: 8 }}>View all ›</Text>
+      <Text style={[{ fontSize: 12, fontWeight: '700', color: accent, marginTop: 8 }, shade]}>View all ›</Text>
+      </Wrap>
     </TouchableOpacity>
   );
 }
 
 // ── Birthday today: personal / team message ──────────────────────────────
-function BirthdayHighlight({ today, isMine }) {
+// From 12:00 midnight (India time) on the birthday, every colleague sees a
+// 🎉 Wish button here; it opens the party modal to write a message. The
+// birthday person sees how many wished them and can read the messages.
+function BirthdayHighlight({ today, isMine, onWished }) {
+  const [wishesOpen, setWishesOpen] = useState(false);
   const mine = today.find(isMine);
   const others = today.filter((b) => !isMine(b));
   if (!mine && others.length === 0) return null;
@@ -363,6 +434,24 @@ function BirthdayHighlight({ today, isMine }) {
           <Text style={{ color: '#fff', opacity: 0.9, fontSize: 13, marginTop: 4, lineHeight: 19 }}>
             Wishing you a wonderful day. The whole team is celebrating with you today. 🥳
           </Text>
+          <TouchableOpacity
+            onPress={() => setWishesOpen(true)}
+            activeOpacity={0.85}
+            style={{
+              alignSelf: 'flex-start',
+              marginTop: 12,
+              paddingHorizontal: 14,
+              paddingVertical: 8,
+              borderRadius: 999,
+              backgroundColor: 'rgba(255,255,255,0.2)',
+              borderWidth: 1,
+              borderColor: 'rgba(255,255,255,0.5)',
+            }}>
+            <Text style={{ color: '#fff', fontWeight: '800', fontSize: 12 }}>
+              💌 {mine.wishCount ? `${mine.wishCount} wish${mine.wishCount === 1 ? '' : 'es'} — read them` : 'See your wishes'}
+            </Text>
+          </TouchableOpacity>
+          <MyWishesModal visible={wishesOpen} onClose={() => setWishesOpen(false)} />
         </View>
       )}
 
@@ -385,10 +474,18 @@ function BirthdayHighlight({ today, isMine }) {
               key={`${b.id ?? b.name}-${i}`}
               style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: i ? 8 : 2 }}>
               <Avatar name={b.name} uri={b.photoUrl} size={36} self={isMine(b)} />
-              <Text style={{ flex: 1, fontSize: 13, color: '#9A3412', lineHeight: 20 }}>
-                Today is <Text style={{ fontWeight: '800' }}>{b.name}</Text>&apos;s birthday — don&apos;t
-                forget to wish them and celebrate! 🥳
-              </Text>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 13, color: '#9A3412', lineHeight: 20 }}>
+                  Today is <Text style={{ fontWeight: '800' }}>{b.name}</Text>&apos;s birthday — wish them and
+                  celebrate! 🥳
+                </Text>
+                {b.wishCount ? (
+                  <Text style={{ fontSize: 11, color: '#BE185D', marginTop: 2 }}>
+                    {b.wishCount} wish{b.wishCount === 1 ? '' : 'es'} so far
+                  </Text>
+                ) : null}
+              </View>
+              <WishButton item={b} onWished={onWished} compact />
             </View>
           ))}
         </View>

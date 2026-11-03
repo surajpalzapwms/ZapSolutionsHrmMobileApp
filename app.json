@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "H.R.M. In A ZAP",
+    "name": "HRM-EOVO",
     "slug": "hrm-app",
     "version": "1.0.0",
     "web": {
@@ -14,7 +14,8 @@
         "expo-splash-screen",
         {
           "image": "./assets/splash.png",
-          "backgroundColor": "#6C4EE0"
+          "resizeMode": "contain",
+          "backgroundColor": "#FFFFFF"
         }
       ],
       "expo-status-bar",
@@ -29,22 +30,25 @@
       [
         "expo-location",
         {
-          "locationAlwaysAndWhenInUsePermission": "H.R.M. In A ZAP uses your location to mark your attendance when you reach the office.",
-          "locationWhenInUsePermission": "H.R.M. In A ZAP uses your location to mark your attendance when you reach the office.",
+          "locationAlwaysAndWhenInUsePermission": "HRM-EOVO uses your location to mark your attendance when you reach the office.",
+          "locationWhenInUsePermission": "HRM-EOVO uses your location to mark your attendance when you reach the office.",
           "isAndroidBackgroundLocationEnabled": true,
           "isIosBackgroundLocationEnabled": true,
           "isAndroidForegroundServiceEnabled": true,
-          "locationAlwaysPermission": "H.R.M. In A ZAP uses your location in the background to mark your in-time and going-time automatically when you reach or leave the office."
+          "locationAlwaysPermission": "HRM-EOVO uses your location in the background to mark your in-time and going-time automatically when you reach or leave the office."
         }
       ],
       [
         "expo-build-properties",
         {
           "android": {
-            "usesCleartextTraffic": true
+            "usesCleartextTraffic": true,
+            "compileSdkVersion": 36,
+            "targetSdkVersion": 36
           }
         }
-      ]
+      ],
+      "expo-sharing"
     ],
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -55,8 +59,8 @@
     "ios": {
       "supportsTablet": true,
       "infoPlist": {
-        "NSLocationWhenInUseUsageDescription": "H.R.M. In A ZAP uses your location to mark your attendance when you reach the office.",
-        "NSLocationAlwaysAndWhenInUseUsageDescription": "H.R.M. In A ZAP uses your location to mark your attendance when you reach the office.",
+        "NSLocationWhenInUseUsageDescription": "HRM-EOVO uses your location to mark your attendance when you reach the office.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "HRM-EOVO uses your location to mark your attendance when you reach the office.",
         "UIBackgroundModes": [
           "location",
           "fetch"
@@ -69,27 +73,29 @@
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#6C4EE0"
+        "backgroundColor": "#FFFFFF"
       },
-      "package": "com.anonymous.hrmapp",
+      "package": "com.zapsolutionz.hrm",
       "permissions": [
-        "ACCESS_NETWORK_STATE",
-        "ACCESS_WIFI_STATE",
-        "ACCESS_FINE_LOCATION",
-        "ACCESS_COARSE_LOCATION",
-        "ACCESS_BACKGROUND_LOCATION",
-        "FOREGROUND_SERVICE",
-        "FOREGROUND_SERVICE_LOCATION"
+        "android.permission.ACCESS_NETWORK_STATE",
+        "android.permission.ACCESS_WIFI_STATE",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_BACKGROUND_LOCATION",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_LOCATION",
+        "android.permission.RECORD_AUDIO"
       ],
-      "versionCode": 4
+      "versionCode": 5
     },
     "extra": {
       "apiUrl": "https://hrm.zapsolutionz.com",
       "office": {
         "wifiNames": [
+          "PUT-OFFICE-WIFI-NAME-HERE",
           "PUT-OFFICE-WIFI-NAME-HERE"
         ],
-        "location": null,
+        "location": {},
         "autoSignIn": {
           "from": "06:00",
           "until": "22:00"
@@ -101,7 +107,11 @@
         "autoSignOut": {
           "confirmMinutes": 10
         }
+      },
+      "eas": {
+        "projectId": "c5cc4c9b-f8c1-4fcf-9337-36ce5b5d961a"
       }
-    }
+    },
+    "owner": "surajzapkandivali"
   }
 }

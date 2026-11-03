@@ -6,15 +6,18 @@
 //
 // Totals reconcile with the payroll record:
 //   Total earnings   = basic salary + allowances
-//   Total deductions = leave (unpaid days) + deductions + advance recovered
+//   Total deductions = leave (unpaid days) + late coming + referral
+//                      commission (first month) + deductions + advance
 //   Net salary       = item.netSalary (what the backend saved)
-import { COMPANY_NAME, esc, longDate, sharePdf } from "./pdfShare";
-import { formatPeriod } from "./format";
+import { esc, getCompanyName, longDate, sharePdf } from "./pdfShare";
+import { getTenant } from "./tenant";
+import { isDefaultCompany } from "../config/tenants";
+import { formatMoneyZero, formatPeriod } from "./format";
 import { FOOTER_IMG, HEADER_IMG, STAMP_IMG } from "./payslipAssets";
 
 const num = (v) => Number(v) || 0;
 const NA = "NA";
-const rs = (v) => `₹ ${num(v).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const rs = (v) => formatMoneyZero(v);
 const nameOf = (x) => String(x?.type || x?.name || x?.title || "").trim();
 
 // Template rows. Allowances whose name matches go into these rows; anything
@@ -58,6 +61,12 @@ const lineRow = (label, value) =>
   `<tr><td class="l">${esc(label)}</td><td class="c">:</td><td class="v">${esc(value)}</td></tr>`;
 
 export function buildPayslipHtml(item, staffArg = {}) {
+  // Letterhead / stamp images are ZAP Solutionz's own — other companies get a
+  // plain text header with their own name.
+  const tenant = getTenant();
+  const useZapLetterhead = isDefaultCompany(tenant?.companyCode, tenant?.companyName);
+  const COMPANY_NAME = getCompanyName();
+  const signatory = tenant?.signatory || (useZapLetterhead ? "Richard Sanchez" : "");
   // Profile: the populated employee on the record (admin view) + whatever
   // the caller passed (own profile for staff).
   const emp = item.employeeId && typeof item.employeeId === "object" ? item.employeeId : {};
@@ -83,18 +92,37 @@ export function buildPayslipHtml(item, staffArg = {}) {
 
   // ── Deductions ──
   const deductions = (Array.isArray(item.deductions) ? item.deductions : []).filter((d) => num(d.amount));
-  const leaveDeduction =
-    adjusted != null && basic - adjusted >= 0.01 ? basic - adjusted : num(info.leaveDeduction);
+  // Every cut from the basic is its own row, so the slip adds up:
+  //   20,000.00 − 1,333.33 leave − 5,000.00 Navkar commission = 13,666.67
+  const r2 = (n) => Math.round(num(n) * 100) / 100;
+  const leaveDeduction = r2(info.leaveDeduction);
+  const lateDeduction = r2(info.lateDeduction);
+  const referralCommission = r2(item.referralCommission);
+  const advanceDeduction = r2(item.advanceDeduction);
+  // Days before joining / after leaving (simply not employed that month).
+  const notPayable =
+    adjusted != null
+      ? r2(basic - leaveDeduction - lateDeduction - referralCommission - (adjusted + advanceDeduction))
+      : 0;
   const dedRows = slotRows(DEDUCTION_SLOTS, deductions);
   if (leaveDeduction) {
     const days = num(info.unpaidLeaves);
     dedRows.push({ label: days ? `Leave Deduction (${days} day${days === 1 ? "" : "s"})` : "Leave Deduction", amount: leaveDeduction });
   }
-  if (num(item.advanceDeduction)) dedRows.push({ label: "Advance Recovered", amount: num(item.advanceDeduction) });
+  if (lateDeduction) dedRows.push({ label: "Late Coming Deduction", amount: lateDeduction });
+  if (referralCommission) {
+    const org = item.referral?.organizationName || "Referral";
+    const pct = num(item.referral?.percent);
+    dedRows.push({ label: `${org} Commission${pct ? ` (${r2(pct)}%)` : ""}`, amount: referralCommission });
+  }
+  if (advanceDeduction) dedRows.push({ label: "Advance Recovered", amount: advanceDeduction });
+  if (notPayable > 0.009) dedRows.push({ label: "Days not employed", amount: notPayable });
   const dedListTotal = item.totalDeduction != null && num(item.totalDeduction)
     ? num(item.totalDeduction)
     : deductions.reduce((t, d) => t + num(d.amount), 0);
-  const totalDeductions = dedListTotal + leaveDeduction + num(item.advanceDeduction);
+  const totalDeductions =
+    dedListTotal + leaveDeduction + lateDeduction + referralCommission + advanceDeduction +
+    (notPayable > 0.009 ? notPayable : 0);
 
   const net = num(item.netSalary ?? item.netPay ?? item.amount);
   const totalPayable = item.totalPayable != null ? num(item.totalPayable) : net;
@@ -127,6 +155,7 @@ export function buildPayslipHtml(item, staffArg = {}) {
   html, body { margin: 0; padding: 0; background: #fff; }
   body { font-family: "Noto Sans", Roboto, "Open Sans", Arial, sans-serif; color: #2b2b2b; }
   .page { position: relative; width: 595pt; min-height: 841pt; display: flex; flex-direction: column; overflow: hidden; }
+  .hdrText { padding: 30pt 50pt 14pt; font-size: 18pt; font-weight: 800; color: #0c3754; border-bottom: 2pt solid #c9a227; margin-bottom: 14pt; }
   .hdr { display: block; width: 595pt; height: auto; }
   .ftr { position: absolute; left: 0; bottom: 0; width: 595pt; height: auto; z-index: 0; }
   .body { position: relative; z-index: 1; padding: 0 50pt; flex: 1; display: flex; flex-direction: column; }
@@ -167,8 +196,11 @@ export function buildPayslipHtml(item, staffArg = {}) {
   .stamp { position: absolute; left: 214pt; top: 76pt; width: 89pt; height: 89pt; }
 </style></head><body>
 <div class="page">
-  <img class="hdr" src="${HEADER_IMG}"/>
-  <img class="ftr" src="${FOOTER_IMG}"/>
+  ${
+    useZapLetterhead
+      ? `<img class="hdr" src="${HEADER_IMG}"/><img class="ftr" src="${FOOTER_IMG}"/>`
+      : `<div class="hdrText">${esc(COMPANY_NAME)}</div>`
+  }
   <div class="body">
     <h1>EMPLOYEE PAYSLIP</h1>
 
@@ -209,10 +241,10 @@ export function buildPayslipHtml(item, staffArg = {}) {
           <p>Approved by Admin</p>
         </div>
       </div>
-      <img class="stamp" src="${STAMP_IMG}"/>
+      ${useZapLetterhead ? `<img class="stamp" src="${STAMP_IMG}"/>` : ""}
       <div class="right">
         <div>Prepared by:</div>
-        <div class="sig">Richard Sanchez<br/>${esc(COMPANY_NAME)}</div>
+        <div class="sig">${esc(signatory)}<br/>${esc(COMPANY_NAME)}</div>
       </div>
     </div>
   </div>

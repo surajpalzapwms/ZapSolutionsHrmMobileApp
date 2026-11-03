@@ -11,7 +11,7 @@ const HEADER_HEIGHT = LOGO_SIZE * 0.75;
 export default function ModuleSheetHeader({ title, subtitle, right }) {
   return (
     <LinearGradient
-      colors={[colors.headerFrom, colors.headerTo]}
+      colors={[colors.headerFrom, colors.headerVia, colors.headerTo]}
       start={{ x: 0, y: 0 }}
       end={{ x: 1, y: 1 }}
       style={{

@@ -6,16 +6,101 @@
 //   <SettlementStatement /> — the full statement (opened from Preview /
 //                             the "Settlement" quick action).
 //
-// Data comes from GET /api/staff/:id/settlement — the same endpoint and
-// figures as the website's Settlement Statement.
+// Data comes from GET /api/staff/:id/settlement (leave, encashment,
+// advance). The month-wise salary still owed comes from the SAME rules as the
+// "Pending Amount" screen (services/pendingSalaryService.js), so every month
+// worked — e.g. Sep 2026 and Oct 2026 — is listed, and the total payable
+// here always equals the Pending Amount total (+ leave encashment − advance).
 import React, { useCallback, useEffect, useState } from "react";
 import { ActivityIndicator, Alert, RefreshControl, ScrollView, Text, TouchableOpacity, View } from "react-native";
 import { useAuth } from "../contexts/AuthContext";
 import { staffService } from "../services/staffService";
+import { getPendingSalary } from "../services/pendingSalaryService";
 import { colors, radius, shadow } from "../theme/colors";
 import { d2, downloadSettlementPdf, fmtDate, money } from "../utils/settlementPdf";
+import { monthBreakdownLines, monthTotals } from "../utils/settlementBreakdown";
 
-export function useSettlement(staffId) {
+const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const labelOf = (p) => {
+  const [y, m] = String(p).split("-").map(Number);
+  return `${MONTHS[m - 1] || m} ${y}`;
+};
+
+// Puts the Pending Amount months into the settlement and recomputes totals:
+//   Pending salary      = Pending Amount total (every unpaid month)
+//   Total payable       = Pending salary + Paid Leave encashment
+//   Balance payable     = Total payable − outstanding advance
+// (an advance already taken off a "not generated" month's estimate is not
+// taken off a second time).
+export function mergePendingIntoSettlement(data, pending) {
+  if (!data || !pending) return data;
+  const items = pending.items || [];
+  const byPeriod = new Map(items.map((it) => [it.period, it]));
+  const rows = new Map();
+
+  (data.months || []).forEach((m) => {
+    const it = byPeriod.get(m.period);
+    const pend = it ? r2(it.pending) : 0;
+    rows.set(m.period, {
+      ...m,
+      earned: it ? r2(Math.max(Number(m.earned) || 0, (Number(it.paid) || 0) + pend)) : m.earned,
+      // Not in Pending Amount = fully paid.
+      paid: it ? r2(it.paid) : r2(m.earned),
+      pending: pend,
+      payrollStatus: it ? (it.kind === "not_generated" ? "not generated" : it.kind) : m.payrollStatus,
+    });
+  });
+  items.forEach((it) => {
+    if (rows.has(it.period)) return;
+    rows.set(it.period, {
+      period: it.period,
+      label: labelOf(it.period),
+      payableDays: it.payableDays ?? it.record?.attendanceInfo?.payableDays ?? 0,
+      unpaidDays: it.unpaidDays ?? it.record?.attendanceInfo?.unpaidLeaves ?? 0,
+      totalDays: it.totalDays ?? it.record?.attendanceInfo?.totalWorkingDays ?? 0,
+      earned: r2((Number(it.paid) || 0) + (Number(it.pending) || 0)),
+      paid: r2(it.paid),
+      pending: r2(it.pending),
+      payrollStatus: it.kind === "not_generated" ? "not generated" : it.kind,
+    });
+  });
+
+  const months = [...rows.values()].sort((a, b) => a.period.localeCompare(b.period));
+  const fs = data.finalSettlement || {};
+  const pendingSalary = r2(pending.total);
+  const leaveEncashment = r2(fs.leaveEncashment);
+  const advanceInEstimates = r2(
+    items.filter((it) => it.kind === "not_generated").reduce((s, it) => s + (Number(it.advance) || 0), 0),
+  );
+  const outstandingAdvance = r2(Math.max(0, (Number(fs.outstandingAdvance) || 0) - advanceInEstimates));
+  const totalAmountPayable = r2(pendingSalary + leaveEncashment);
+
+  return {
+    ...data,
+    salaryPeriod: months.length
+      ? {
+          ...(data.salaryPeriod || {}),
+          from: months[0].period,
+          fromLabel: months[0].label,
+        }
+      : data.salaryPeriod,
+    months,
+    pendingMonths: months.filter((m) => m.pending > 0),
+    finalSettlement: {
+      ...fs,
+      totalEarned: r2(months.reduce((s, m) => s + (Number(m.earned) || 0), 0)),
+      amountAlreadyPaid: r2(months.reduce((s, m) => s + (Number(m.paid) || 0), 0)),
+      pendingSalary,
+      totalAmountPayable,
+      outstandingAdvance,
+      balancePayable: r2(Math.max(0, totalAmountPayable - outstandingAdvance)),
+    },
+  };
+}
+
+export function useSettlement(staff) {
+  const staffId = staff?._id || null;
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(!!staffId);
   const [error, setError] = useState("");
@@ -29,15 +114,26 @@ export function useSettlement(staffId) {
     setLoading(true);
     setError("");
     try {
-      const res = await staffService.getSettlement(staffId);
-      setData(res.data?.data || null);
-      if (!res.data?.data) setError("Settlement statement is not ready yet — contact HR.");
+      const [res, pending] = await Promise.all([
+        staffService.getSettlement(staffId),
+        getPendingSalary({
+          employeeId: staffId,
+          joiningDate: staff?.date || staff?.joiningDate || null,
+          relievingDate: staff?.relievingDate || null,
+          hasLeft: true,
+        }).catch(() => null),
+      ]);
+      const base = res.data?.data || null;
+      setData(base ? mergePendingIntoSettlement(base, pending) : null);
+      if (!base) setError("Settlement statement is not ready yet — contact HR.");
     } catch (e) {
       setData(null);
       setError(e.response?.data?.message || "Couldn't load the settlement statement.");
     } finally {
       setLoading(false);
     }
+    // staff fields used above only change with the id
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [staffId]);
 
   useEffect(() => {
@@ -91,7 +187,7 @@ function Btn({ label, onPress, disabled, loading, variant = "primary" }) {
 
 // ── Home card ────────────────────────────────────────────────────────────
 export function SettlementCard({ staff, onPreview }) {
-  const { data, loading, error } = useSettlement(staff?._id);
+  const { data, loading, error } = useSettlement(staff);
   const { downloading, download } = useDownload(data);
   const fs = data?.finalSettlement;
 
@@ -108,8 +204,19 @@ export function SettlementCard({ staff, onPreview }) {
         <Text style={{ fontSize: 12, color: colors.danger, marginTop: 12 }}>{error}</Text>
       ) : fs ? (
         <View style={{ marginTop: 12, backgroundColor: "#FDF0D1", borderRadius: radius.md, padding: 12 }}>
-          <Line label="Pending salary" value={money((fs.totalAmountPayable || 0) - (fs.leaveEncashment || 0))} />
-          <Line label={`Paid Leave encashment (${d2(fs.leaveEncashmentDays)} days)`} value={money(fs.leaveEncashment)} />
+          {(data.pendingMonths || []).length ? (
+            (data.pendingMonths || []).map((m) => (
+              <Line key={m.period} label={`${m.label} salary`} value={money(m.pending)} />
+            ))
+          ) : (
+            <Line label="Pending salary" value={money(0)} />
+          )}
+          {(data.pendingMonths || []).length > 1 ? (
+            <Line label="Pending salary (total)" value={money(fs.pendingSalary)} />
+          ) : null}
+          {!data.probationExit ? (
+            <Line label={`Paid Leave encashment (${d2(fs.leaveEncashmentDays)} days)`} value={money(fs.leaveEncashment)} />
+          ) : null}
           {fs.outstandingAdvance > 0 ? (
             <Line label="Less: outstanding advance" value={`− ${money(fs.outstandingAdvance)}`} color={colors.danger} />
           ) : null}
@@ -187,9 +294,79 @@ function Row({ label, value, highlight, bold, sub, valueColor }) {
   );
 }
 
-export function SettlementStatement() {
+// "How this month's amount came" — opened with View details.
+function MonthRow({ m }) {
+  const [open, setOpen] = useState(false);
+  const unpaid = Number(m.unpaidDays) || 0;
+  return (
+    <View style={{ borderTopWidth: 1, borderTopColor: colors.border, backgroundColor: m.pending > 0 ? "#FDF0D1" : "#fff" }}>
+      <View style={{ flexDirection: "row", justifyContent: "space-between", gap: 10, paddingHorizontal: 12, paddingTop: 9 }}>
+        <View style={{ flex: 1 }}>
+          <Text style={{ fontSize: 12, color: colors.text, fontWeight: "700" }}>{m.label}</Text>
+          <Text style={{ fontSize: 10, color: colors.textMuted, marginTop: 1 }}>
+            {`${d2(m.payableDays - m.unpaidDays)}/${m.totalDays} days paid · Earned ${money(m.earned)} · Paid ${money(m.paid)}`}
+          </Text>
+          <Text style={{ fontSize: 10, color: unpaid ? colors.danger : colors.textMuted, marginTop: 1 }}>
+            {unpaid ? `Unpaid leave: ${d2(unpaid)} day(s)` : "No unpaid leave"}
+          </Text>
+        </View>
+        <Text style={{ fontSize: 12, fontWeight: "800", color: m.pending > 0 ? "#B45309" : colors.success }}>
+          {m.pending > 0 ? `Pending ${money(m.pending)}` : "Settled"}
+        </Text>
+      </View>
+      <TouchableOpacity onPress={() => setOpen((o) => !o)} hitSlop={6} style={{ paddingHorizontal: 12, paddingVertical: 7 }}>
+        <Text style={{ fontSize: 12, fontWeight: "700", color: colors.primary }}>{open ? "Hide details ▲" : "View details ▼"}</Text>
+      </TouchableOpacity>
+      {open ? (
+        <View style={{ marginHorizontal: 12, marginBottom: 10, padding: 10, borderRadius: radius.md, backgroundColor: "#EFF6FF" }}>
+          {monthBreakdownLines(m).map((l, i) => (
+            <View
+              key={i}
+              style={{
+                flexDirection: "row",
+                justifyContent: "space-between",
+                gap: 8,
+                paddingVertical: 3,
+                borderTopWidth: l.kind === "total" ? 1 : 0,
+                borderTopColor: "#BFDBFE",
+              }}
+            >
+              <View style={{ flex: 1 }}>
+                <Text
+                  style={{
+                    fontSize: 11,
+                    color: l.kind === "muted" ? colors.textMuted : colors.text,
+                    fontWeight: l.kind === "total" ? "800" : "500",
+                  }}
+                >
+                  {l.sign && l.sign !== "=" ? `${l.sign === "-" ? "−" : "+"} ` : ""}
+                  {l.label}
+                </Text>
+                {l.sub ? <Text style={{ fontSize: 10, color: colors.textMuted }}>{l.sub}</Text> : null}
+              </View>
+              <Text
+                style={{
+                  fontSize: 11,
+                  fontWeight: l.kind === "total" || l.kind === "pending" ? "800" : "600",
+                  color: l.sign === "-" ? colors.danger : l.kind === "pending" ? "#B45309" : colors.text,
+                }}
+              >
+                {l.sign === "-" ? "− " : ""}
+                {money(l.amount)}
+              </Text>
+            </View>
+          ))}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+// `staff` = the staff member to show (super admin, from Staff → details).
+// Without it, the logged-in staff member's own settlement is shown.
+export function SettlementStatement({ staff } = {}) {
   const { myProfile } = useAuth();
-  const { data, loading, error, reload } = useSettlement(myProfile?._id);
+  const { data, loading, error, reload } = useSettlement(staff || myProfile);
   const { downloading, download } = useDownload(data);
 
   if (loading && !data) {
@@ -208,6 +385,9 @@ export function SettlementStatement() {
   const t = lb.totals;
   const fs = data.finalSettlement || {};
   const period = data.salaryPeriod || {};
+  // Left during probation: no salary rate rows, no Leave Summary/encashment.
+  const probation = !!data.probationExit;
+  const mt = monthTotals(data.months || []);
 
   return (
     <ScrollView
@@ -222,12 +402,25 @@ export function SettlementStatement() {
       <Section title="Overview">
         <Row label="Staff Name" value={s.staffName || "—"} />
         {s.staffId ? <Row label="Staff ID" value={s.staffId} /> : null}
-        <Row label="Date of Confirmation" value={fmtDate(s.confirmationDate)} />
-        <Row label="Relieving Date" value={fmtDate(s.relievingDate)} />
-        <Row label="Monthly Salary" value={money(data.monthlySalary)} />
-        <Row label="Per Day Salary" value={money(data.perDaySalary)} />
+        <Row
+          label={probation ? "Joining Date (Probation)" : "Joining Date"}
+          value={fmtDate(s.joiningDate || (staff || myProfile)?.date)}
+        />
+        <Row label="Date of Confirmation" value={probation ? "— (left during probation)" : fmtDate(s.confirmationDate)} />
+        <Row label={probation ? "Termination / Relieving Date" : "Relieving Date"} value={fmtDate(s.relievingDate)} />
+        {!probation ? <Row label="Monthly Salary" value={money(data.monthlySalary)} /> : null}
+        {!probation ? <Row label="Per Day Salary" value={money(data.perDaySalary)} /> : null}
       </Section>
 
+      {probation ? (
+        <View style={{ backgroundColor: "#EFF6FF", borderRadius: radius.md, padding: 12, marginBottom: 14 }}>
+          <Text style={{ fontSize: 12, color: "#1E40AF" }}>
+            Left during the probation period — no leave is earned before confirmation, so there is no Leave Summary or
+            leave encashment. Unpaid leave is deducted month by month below; tap View details to see how each month's
+            amount was worked out.
+          </Text>
+        </View>
+      ) : (
       <Section title="Leave Summary">
         {t ? (
           <>
@@ -250,18 +443,18 @@ export function SettlementStatement() {
         ) : null}
         <Row label="Paid Leave Remaining (encashed)" value={`${d2(lb.paidRemaining)} days`} highlight />
       </Section>
+      )}
 
       <Section title={`Month-wise Salary (${period.fromLabel || ""} – ${period.toLabel || ""})`}>
         {(data.months || []).map((m) => (
-          <Row
-            key={m.period}
-            label={m.label}
-            sub={`${d2(m.payableDays - m.unpaidDays)}/${m.totalDays} days · Earned ${money(m.earned)} · Paid ${money(m.paid)}`}
-            value={m.pending > 0 ? `Pending ${money(m.pending)}` : "Settled"}
-            valueColor={m.pending > 0 ? "#B45309" : colors.success}
-            highlight={m.pending > 0}
-          />
+          <MonthRow key={m.period} m={m} />
         ))}
+        <Row
+          label="Total"
+          sub={`Unpaid leave ${d2(mt.unpaidDays)} day(s) · Earned ${money(mt.earned)} · Paid ${money(mt.paid)}`}
+          value={`Pending ${money(mt.pending)}`}
+          bold
+        />
       </Section>
 
       <Section title="Final Settlement Amount">
@@ -277,7 +470,7 @@ export function SettlementStatement() {
             value={money(m.pending)}
           />
         ))}
-        {(fs.leaveEncashmentMonths || []).map((m) => (
+        {(probation ? [] : fs.leaveEncashmentMonths || []).map((m) => (
           <Row
             key={`pl-${m.period}`}
             label={`Paid Leave ${m.label}`}
@@ -286,7 +479,9 @@ export function SettlementStatement() {
             valueColor={colors.success}
           />
         ))}
-        <Row label={`Leave encashment (${d2(fs.leaveEncashmentDays)} days)`} value={money(fs.leaveEncashment)} bold />
+        {!probation ? (
+          <Row label={`Leave encashment (${d2(fs.leaveEncashmentDays)} days)`} value={money(fs.leaveEncashment)} bold />
+        ) : null}
         <Row label="Total Amount Payable" value={money(fs.totalAmountPayable)} bold />
         {fs.outstandingAdvance > 0 ? (
           <Row label="Less: Outstanding Advance" value={`− ${money(fs.outstandingAdvance)}`} valueColor={colors.danger} />
@@ -297,8 +492,8 @@ export function SettlementStatement() {
       <Btn label="Download PDF" onPress={download} loading={downloading} />
 
       <Text style={{ fontSize: 11, color: colors.textMuted, marginTop: 12 }}>
-        Figures are calculated live from attendance, leave and payroll records as of today. The PDF also includes the
-        month-wise leave ledger.
+        Figures are calculated live from attendance, leave and payroll records as of today. The PDF also includes every
+        month's details{probation ? "" : " and the month-wise leave ledger"}.
       </Text>
     </ScrollView>
   );

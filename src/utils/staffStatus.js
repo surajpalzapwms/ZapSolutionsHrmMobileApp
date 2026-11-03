@@ -5,6 +5,7 @@
 // relieving date that is today or earlier. A relieving date still in the
 // future means they are serving their notice period and still work here.
 // "Relieved" with no relieving date recorded counts as left.
+import { utcOffsetMs } from "./tenant";
 
 const startOfToday = () => {
   const d = new Date();
@@ -23,13 +24,12 @@ export const hasLeftOrganization = (staff) => {
 
 export const isCurrentStaff = (staff) => !hasLeftOrganization(staff);
 
-// "YYYY-MM-DD" of a stored date, read in India time (IST, UTC+5:30) — the
-// same as the website's toISTDateKey. Done with a fixed offset instead of
+// "YYYY-MM-DD" of a stored date, read in the COMPANY's time zone (India = IST
+// UTC+5:30, Saudi Arabia = UTC+3 …). Done with a fixed offset instead of
 // Intl timeZone support, which not every phone JS engine has.
-const IST_OFFSET_MS = 330 * 60 * 1000;
 export const dateKeyFrom = (value) => {
   if (!value) return null;
   const d = value instanceof Date ? value : new Date(value);
   if (isNaN(d.getTime())) return null;
-  return new Date(d.getTime() + IST_OFFSET_MS).toISOString().slice(0, 10);
+  return new Date(d.getTime() + utcOffsetMs()).toISOString().slice(0, 10);
 };

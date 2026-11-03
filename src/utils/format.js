@@ -1,5 +1,6 @@
 // src/utils/format.js — display helpers shared by the redesigned screens.
 import { SHORT_MONTHS } from "./constants";
+import { currencySymbol, moneyLocale } from "./tenant";
 
 // "08.00 AM" style used on the Home attendance card.
 export function formatClock(value) {
@@ -36,11 +37,17 @@ export function formatPeriod(period) {
   return `${SHORT_MONTHS[Number(m[2]) - 1] || m[2]} ${m[1]}`;
 }
 
-// "₹12,500"
+// "₹12,500.00" / "SAR 12,500.00" — always 2 decimals; symbol + digit grouping
+// follow the logged-in company's country (see config/tenants.js).
 export function formatMoney(amount) {
   const n = Number(amount);
   if (amount === null || amount === undefined || isNaN(n)) return "—";
-  return `₹${Math.round(n).toLocaleString("en-IN")}`;
+  return formatMoneyZero(n);
+}
+
+// Same, but a missing / bad value shows as 0.00 (used inside tables and PDFs).
+export function formatMoneyZero(amount) {
+  return `${currencySymbol()}${(Number(amount) || 0).toLocaleString(moneyLocale(), { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 export function workedMinutes(login, logout, upToNow = false) {

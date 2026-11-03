@@ -142,7 +142,7 @@ export function ListItem({ emoji, emojiBg = colors.primarySoft, leading, title, 
           </Text>
         ) : null}
         {meta ? (
-          <Text style={{ fontSize: 12, color: colors.textMuted, marginTop: 2 }} numberOfLines={1}>
+          <Text style={{ fontSize: 12, color: colors.textMuted, marginTop: 2 }} numberOfLines={3}>
             {meta}
           </Text>
         ) : null}

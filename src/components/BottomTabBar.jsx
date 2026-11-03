@@ -1,6 +1,6 @@
 // src/components/BottomTabBar.jsx
-// Custom tab bar for React Navigation: six equal tabs in ONE row —
-// Home | Attendance | Salary Slip | Pending | Activity | Profile.
+// Custom tab bar for React Navigation: five equal tabs in ONE row —
+// Home | Attendance | Salary Slip | Activity | Profile.
 // (The old raised round button in the middle has been removed; Salary Slip
 // is now a normal tab like the others.)
 import React from "react";

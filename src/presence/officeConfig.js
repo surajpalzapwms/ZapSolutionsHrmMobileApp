@@ -2,7 +2,7 @@
 // Office details, set ONCE in app.json -> expo.extra.office
 //
 //   "office": {
-//     "wifiNames": ["ZAP-Office", "ZAP-Office-5G", "ZAP-Guest"],   // any number
+//     "wifiNames": ["Office", "Office-5G", "Guest"],   // any number
 //     "location": { "latitude": 19.07, "longitude": 72.87, "radius": 150 },
 //     "autoSignIn": { "from": "06:00", "until": "22:00" },
 //     "lunch": { "from": "13:00", "until": "14:00" },     // going out now is fine

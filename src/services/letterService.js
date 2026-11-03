@@ -14,6 +14,7 @@ export async function getMyLetters() {
       issued: Boolean(l.issued),
       reason: l.reason || "",
       issuedAt: l.issuedAt || null,
+      issuedByName: l.issuedByName || "",
     };
   });
   return map;
@@ -26,15 +27,15 @@ export async function getStaffLetters(staffId) {
   return Array.isArray(res.data?.data) ? res.data.data : [];
 }
 
-// Offer / Joining / Confirmation: the details form —
+// Any of the six letters: the details form —
 // { fields: [{ key, label, kind, required, missing, value, options }], missingCount }
 export async function getLetterForm(staffId, type) {
   const res = await api.get(`/api/hrm/letters/staff/${staffId}/${type}/form`);
   return res.data?.data || { fields: [], missingCount: 0 };
 }
 
-// `details` = the values entered in the details form (offer / joining /
-// confirmation); the other letters are generated without it.
+// `details` = the values entered in the details form (every letter —
+// Termination / Leaving / Experience carry the last working day).
 export async function issueLetter(staffId, type, details) {
   const res = await api.post(`/api/hrm/letters/staff/${staffId}/${type}/issue`, details ? { details } : {});
   return res.data;

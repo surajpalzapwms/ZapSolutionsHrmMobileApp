@@ -4,6 +4,8 @@
 // and the letters. expo-print / expo-sharing are already in package.json;
 // they are still loaded optionally so the app bundles even if missing.
 import { Alert } from "react-native";
+import { formatMoneyZero } from "./format";
+import { companyName } from "./tenant";
 
 let Print = null;
 let Sharing = null;
@@ -60,7 +62,8 @@ async function renamePdf(uri, fileName) {
   return uri;
 }
 
-export const COMPANY_NAME = "ZAP Solutionz";
+// Company of the logged-in account (was hard-coded "ZAP Solutionz").
+export const getCompanyName = () => companyName();
 
 export const esc = (v) =>
   String(v ?? "")
@@ -69,7 +72,7 @@ export const esc = (v) =>
     .replace(/>/g, "&gt;");
 
 export const inr = (v) =>
-  `₹${(Number(v) || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  formatMoneyZero(v);
 
 export const longDate = (value) => {
   if (!value) return "—";
@@ -80,10 +83,10 @@ export const longDate = (value) => {
 
 /**
  * Download a PDF the SERVER made (e.g. /api/hrm/letters/offer/download) with
- * the login token, save it as `fileName` and open the share / save sheet.
- * Returns the local uri, or throws if it could not be downloaded.
+ * the login token and save it as `fileName` in the cache. Returns the local
+ * uri; throws with the server's own message when it refused.
  */
-export async function shareRemotePdf(path, fileName) {
+export async function fetchRemotePdf(path, fileName) {
   const { BACKEND_URL } = require("./constants");
   const { getAuthTokenSync } = require("./authToken");
   const fs = FileSystemLegacy?.downloadAsync ? FileSystemLegacy : FileSystem?.downloadAsync ? FileSystem : null;
@@ -96,11 +99,51 @@ export async function shareRemotePdf(path, fileName) {
   const res = await fs.downloadAsync(url, to, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   });
-  if (!res || res.status !== 200) throw new Error(`Download failed (${res?.status || "no response"})`);
-  if (Sharing?.isAvailableAsync && (await Sharing.isAvailableAsync())) {
-    await Sharing.shareAsync(res.uri, { mimeType: "application/pdf", UTI: "com.adobe.pdf", dialogTitle: fileName });
+  if (!res || res.status !== 200) {
+    // The server answers errors as JSON ({ message }) — show that text.
+    let message = "";
+    try {
+      const body = await fs.readAsStringAsync(res.uri);
+      message = JSON.parse(body)?.message || "";
+    } catch {
+      message = "";
+    }
+    await fs.deleteAsync(to, { idempotent: true }).catch(() => {});
+    throw new Error(message || `Download failed (${res?.status || "no response"})`);
   }
   return res.uri;
+}
+
+/** Open the share / save sheet for a PDF already on the phone. */
+export async function shareLocalPdf(uri, fileName) {
+  if (Sharing?.isAvailableAsync && (await Sharing.isAvailableAsync())) {
+    await Sharing.shareAsync(uri, { mimeType: "application/pdf", UTI: "com.adobe.pdf", dialogTitle: fileName });
+  }
+  return uri;
+}
+
+/**
+ * Show a PDF on screen. Uses the system print preview, which draws the real
+ * PDF pages (so the letter looks exactly like the website's). Falls back to
+ * the share sheet (opens in any PDF viewer) if printing isn't available.
+ */
+export async function openPdfPreview(uri, fileName) {
+  if (Print?.printAsync) {
+    try {
+      await Print.printAsync({ uri });
+      return uri;
+    } catch {
+      // fall through to the share sheet
+    }
+  }
+  return shareLocalPdf(uri, fileName);
+}
+
+/** Download a server PDF and open the share / save sheet. */
+export async function shareRemotePdf(path, fileName) {
+  const uri = await fetchRemotePdf(path, fileName);
+  await shareLocalPdf(uri, fileName);
+  return uri;
 }
 
 export async function sharePdf(html, fileName) {

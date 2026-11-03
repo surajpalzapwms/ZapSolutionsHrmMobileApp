@@ -25,13 +25,21 @@ async function ensurePermissionsOnce() {
   if (await AsyncStorage.getItem(ASKED_KEY)) return;
   await AsyncStorage.setItem(ASKED_KEY, "1");
   await new Promise((resolve) => {
+    // Prominent disclosure (Google Play User Data policy): says WHAT is
+    // collected, that it happens even when the app is closed / not in use,
+    // WHY, and lets the user decline.
     Alert.alert(
-      "Automatic attendance",
-      "Your attendance can be marked by itself: signed in when you reach the office and signed out " +
-        "(with your going time) when you leave. A lunch break is fine.\n\n" +
-        "On the next screens allow Location and choose \"Allow all the time\" " +
-        "(Android: Location › Allow all the time).",
-      [{ text: "Continue", onPress: async () => { await askLocationPermissions(); resolve(); } }],
+      "Location for automatic attendance",
+      "HRM-EOVO collects location data to mark your attendance automatically — " +
+        "your in-time when you reach the office and your going-time when you leave — " +
+        "even when the app is closed or not in use.\n\n" +
+        "Your location is used only for attendance and is not shared with anyone else.\n\n" +
+        "If you agree, allow Location on the next screen and choose \"Allow all the time\". " +
+        "You can change this anytime in Settings.",
+      [
+        { text: "No thanks", style: "cancel", onPress: () => resolve() },
+        { text: "Agree", onPress: async () => { await askLocationPermissions().catch(() => {}); resolve(); } },
+      ],
       { cancelable: false }
     );
   });

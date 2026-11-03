@@ -17,24 +17,32 @@ import { colors, radius } from "../theme/colors";
 export const staffNameOf = (s) => s?.staffName || s?.name || "Staff";
 export const staffKeyOf = (s) => (s ? String(s._id || s.id || "") : "");
 
+// Two cached lists:
+//   visible — what every screen uses. Staff an admin DISABLED are not in it.
+//   all     — the Staff tab only: everyone, so a disabled person can be enabled again.
 let staffPromise = null;
+let allStaffPromise = null;
 export function clearStaffCache() {
   staffPromise = null;
+  allStaffPromise = null;
 }
+
+const sortStaff = (list) =>
+  list.sort((a, b) => {
+    // Current staff first, then A–Z.
+    const la = hasLeftOrganization(a) ? 1 : 0;
+    const lb = hasLeftOrganization(b) ? 1 : 0;
+    if (la !== lb) return la - lb;
+    return staffNameOf(a).localeCompare(staffNameOf(b));
+  });
 
 function loadAllStaff() {
   if (!staffPromise) {
     staffPromise = staffService
       .getAll()
-      .then((res) =>
-        unwrapList(res.data).sort((a, b) => {
-          // Current staff first, then A–Z.
-          const la = hasLeftOrganization(a) ? 1 : 0;
-          const lb = hasLeftOrganization(b) ? 1 : 0;
-          if (la !== lb) return la - lb;
-          return staffNameOf(a).localeCompare(staffNameOf(b));
-        }),
-      )
+      // The server already leaves disabled staff out; this is a second safety
+      // net so a disabled person never shows in a list or dropdown.
+      .then((res) => sortStaff(unwrapList(res.data).filter((s) => s?.enabled !== false)))
       .catch((e) => {
         staffPromise = null;
         throw e;
@@ -43,7 +51,22 @@ function loadAllStaff() {
   return staffPromise;
 }
 
-export function useAllStaff(enabled = true) {
+function loadStaffIncludingDisabled() {
+  if (!allStaffPromise) {
+    allStaffPromise = staffService
+      .getAllIncludingHidden()
+      .then((res) => sortStaff(unwrapList(res.data)))
+      .catch((e) => {
+        allStaffPromise = null;
+        throw e;
+      });
+  }
+  return allStaffPromise;
+}
+
+// useAllStaff(enabled, { includeDisabled })
+//   includeDisabled: true is ONLY for the Staff tab.
+export function useAllStaff(enabled = true, { includeDisabled = false } = {}) {
   const [staff, setStaff] = useState([]);
   const [loading, setLoading] = useState(enabled);
   const [error, setError] = useState("");
@@ -54,19 +77,25 @@ export function useAllStaff(enabled = true) {
       if (fresh) clearStaffCache();
       setLoading(true);
       setError("");
-      return loadAllStaff()
+      return (includeDisabled ? loadStaffIncludingDisabled() : loadAllStaff())
         .then(setStaff)
         .catch((e) => setError(e?.response?.data?.message || "Could not load staff."))
         .finally(() => setLoading(false));
     },
-    [enabled],
+    [enabled, includeDisabled],
   );
 
   useEffect(() => {
     load();
   }, [load]);
 
-  return { staff, loading, error, reload: load };
+  // Lets a screen change one person in the list right away (Enable / Disable).
+  const patch = useCallback((id, changes) => {
+    const apply = (list) => list.map((s) => (String(s._id || s.id) === String(id) ? { ...s, ...changes } : s));
+    setStaff(apply);
+  }, []);
+
+  return { staff, loading, error, reload: load, patch };
 }
 
 export function filterStaff(list, query) {

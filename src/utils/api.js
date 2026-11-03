@@ -1,8 +1,10 @@
 // src/utils/api.js
 import axios from "axios";
+import { Alert } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { BACKEND_URL } from "./constants";
 import { getAuthToken, setAuthToken } from "./authToken";
+import { getTenant, isCompanyViewOnly, isSuperAdminSession, onlyMyCompany } from "./tenant";
 
 // Request logs only while developing — logging every call slows release builds.
 const log = __DEV__ ? console.log : () => {};
@@ -26,11 +28,69 @@ export const setOnUnauthorized = (handler) => {
   onUnauthorized = handler;
 };
 
+// Super admin: the company they opened is gone / invalid → AuthContext sends them
+// back to the company list (they are NOT signed out).
+let onCompanyInvalid = () => {};
+export const setOnCompanyInvalid = (handler) => {
+  onCompanyInvalid = handler;
+};
+const COMPANY_GONE_CODES = new Set(["COMPANY_NOT_FOUND", "COMPANY_INVALID", "COMPANY_REQUIRED"]);
+
+// The server answers 403 + one of these codes once an admin has DISABLED the
+// account (or the staff member has left). The phone must stop showing that
+// person's data straight away — same as a 401.
+// COMPANY_INACTIVE / COMPANY_MISSING = the company was switched off (or the login
+// is not linked to one) → sign out and show the server's message.
+// COMPANY_MISMATCH = the token belongs to a different company than the phone thinks.
+const ACCOUNT_BLOCKED_CODES = new Set([
+  "STAFF_INACTIVE",
+  "STAFF_RELIEVED",
+  "COMPANY_MISMATCH",
+  "COMPANY_INACTIVE",
+  "COMPANY_MISSING",
+]);
+
+// Super admin inside a CLIENT company is view only (the company's own admin adds and
+// edits its records). Every write is stopped here so a half-filled form is not lost
+// silently — the server refuses it too (403 CLIENT_COMPANY_READ_ONLY). Company
+// management (/api/company/...), the login/session calls and the super admin's own
+// profile photo are NOT company data, so they stay allowed (same list as the server).
+export const VIEW_ONLY_MESSAGE = "View only — this company's admin adds and edits its own details.";
+const READ_METHODS = new Set(["get", "head", "options"]);
+const WRITE_ALWAYS_OK = /^\/?api\/(company|auth)(\/|$)|^\/?api\/documents\/me(\/|$)/;
+const isBlockedForViewOnly = (config) => {
+  if (!isCompanyViewOnly()) return false;
+  if (READ_METHODS.has(String(config.method || "get").toLowerCase())) return false;
+  const path = String(config.url || "").replace(/^https?:\/\/[^/]+/, "");
+  return !WRITE_ALWAYS_OK.test(path);
+};
+
 api.interceptors.request.use(
   async (config) => {
+    if (isBlockedForViewOnly(config)) {
+      Alert.alert("View only", VIEW_ONLY_MESSAGE);
+      return Promise.reject(
+        Object.assign(new Error("View only"), {
+          response: { status: 403, data: { code: "CLIENT_COMPANY_READ_ONLY", message: VIEW_ONLY_MESSAGE } },
+        }),
+      );
+    }
     const token = await getAuthToken(); // memory, not storage, on every call
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
+    }
+    // Tell the server which company / country this phone is logged in to.
+    // The server must still take the company from the TOKEN and reject a
+    // mismatch — these headers are a hint + a mismatch check, not the lock.
+    const tenant = getTenant();
+    if (tenant?.companyCode) {
+      config.headers["X-Company-Code"] = tenant.companyCode;
+      config.headers["X-Country"] = tenant.country;
+    }
+    // Super admin: THE company they opened. (For admins and staff the server always
+    // uses their own company from the login and ignores this header.)
+    if (tenant?.companyId) {
+      config.headers["X-Company-Id"] = tenant.companyId;
     }
     log(`[api] → ${config.method?.toUpperCase()} ${config.baseURL}${config.url}`);
     return config;
@@ -41,6 +101,10 @@ api.interceptors.request.use(
 api.interceptors.response.use(
   (response) => {
     log(`[api] ← ${response.status} ${response.config.url}`);
+    // Safety net: drop any row tagged with another company's code.
+    const body = response.data;
+    if (Array.isArray(body)) response.data = onlyMyCompany(body);
+    else if (body && Array.isArray(body.data)) body.data = onlyMyCompany(body.data);
     return response;
   },
   async (error) => {
@@ -51,12 +115,29 @@ api.interceptors.response.use(
         `[api] ← ${error.response.status} ${error.config?.url}`,
         error.response.data
       );
-      if (error.response.status === 401) {
+      const status = error.response.status;
+      const code = error.response.data?.code;
+      const isLoginCall = String(error.config?.url || "").includes("/api/auth/login");
+      // A super admin whose opened company no longer exists goes back to the list.
+      const superCompanyGone = isSuperAdminSession() && COMPANY_GONE_CODES.has(code);
+      if (superCompanyGone) onCompanyInvalid({ message: error.response.data?.message });
+      const accountBlocked = status === 403 && ACCOUNT_BLOCKED_CODES.has(code) && !isLoginCall && !superCompanyGone;
+      if (status === 401 || accountBlocked) {
         setAuthToken(null);
         await AsyncStorage.removeItem("token");
         await AsyncStorage.removeItem("user");
         await AsyncStorage.removeItem("myProfile");
-        onUnauthorized();
+        onUnauthorized(
+          accountBlocked
+            ? {
+                message:
+                  error.response.data?.message ||
+                  (code === "COMPANY_MISMATCH"
+                    ? "Your session belongs to a different company. Please sign in again."
+                    : "You are not allowed to login because admin has deactivated you."),
+              }
+            : undefined,
+        );
       }
     } else if (error.request) {
       // Request was sent but no response ever came back — backend never

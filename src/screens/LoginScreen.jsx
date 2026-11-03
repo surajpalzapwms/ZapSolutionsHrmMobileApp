@@ -1,4 +1,7 @@
-// src/screens/LoginScreen.jsx — same layout as the testing app's login.
+// src/screens/LoginScreen.jsx — same layout as before (gradient header + white
+// card). The HRM-EOVO logo sits in the centre of the header. The user types
+// ONLY email / Staff ID and password: the server works out the company and the
+// country from the Staff ID prefix (e.g. ZS0019, TB0001) or the email.
 import React, { useState } from "react";
 import {
   ActivityIndicator,
@@ -14,12 +17,12 @@ import {
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "../contexts/AuthContext";
-import CornerLogo from "../components/CornerLogo";
+import AppLogo from "../components/AppLogo";
 import { colors, shadow } from "../theme/colors";
-import { APP_NAME } from "../utils/constants";
+import { APP_NAME, APP_TAGLINE } from "../utils/constants";
 
 export default function LoginScreen() {
-  const { login } = useAuth();
+  const { login, sessionNotice } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -28,11 +31,11 @@ export default function LoginScreen() {
 
   const { width, height } = useWindowDimensions();
   const isTablet = width >= 768;
-  const headerHeight = Math.max(height * 0.3, 200);
-  const logoCardWidth = Math.min(width * 0.21, 85);
+  const headerHeight = Math.max(height * 0.3, 220);
+  const logoSize = Math.min(width * 0.5, headerHeight - 44, 200);
 
   const handleSubmit = async () => {
-    if (!email || !password) {
+    if (!email.trim() || !password) {
       setError("Enter your email or Staff ID and password.");
       return;
     }
@@ -54,9 +57,25 @@ export default function LoginScreen() {
           width: "100%",
           borderBottomLeftRadius: 36,
           borderBottomRightRadius: 36,
+          alignItems: "center",
+          justifyContent: "center",
+          paddingBottom: 24,
         }}
       >
-        <CornerLogo size={logoCardWidth} loadFactor={0.4} />
+        {/* White disc behind the round logo so it reads well on the gradient. */}
+        <View
+          style={{
+            width: logoSize + 12,
+            height: logoSize + 12,
+            borderRadius: (logoSize + 12) / 2,
+            backgroundColor: "#fff",
+            alignItems: "center",
+            justifyContent: "center",
+            ...shadow.card,
+          }}
+        >
+          <AppLogo size={logoSize} />
+        </View>
       </LinearGradient>
 
       <KeyboardAvoidingView
@@ -85,12 +104,12 @@ export default function LoginScreen() {
               {APP_NAME}
             </Text>
             <Text style={{ fontSize: 24, fontWeight: "700", color: "#111827" }}>Welcome Back</Text>
-            <Text style={{ marginTop: 4, fontSize: 14, color: "#9CA3AF" }}>Enter your details below</Text>
+            <Text style={{ marginTop: 4, fontSize: 14, color: "#9CA3AF" }}>{APP_TAGLINE}</Text>
 
             <View style={{ marginTop: 32, gap: 16 }}>
               <Field label="Email or Staff ID" icon="mail-outline">
                 <TextInput
-                  placeholder="you@company.com or ZS0019"
+                  placeholder="you@company.com or your Staff ID"
                   placeholderTextColor="#B0B0C3"
                   value={email}
                   onChangeText={setEmail}
@@ -116,6 +135,9 @@ export default function LoginScreen() {
               </Field>
             </View>
 
+            {!error && sessionNotice ? (
+              <Text style={{ marginTop: 16, fontSize: 12, fontWeight: "500", color: "#EF4444" }}>{sessionNotice}</Text>
+            ) : null}
             {error ? (
               <Text style={{ marginTop: 16, fontSize: 12, fontWeight: "500", color: "#EF4444" }}>{error}</Text>
             ) : null}

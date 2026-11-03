@@ -1,56 +1,67 @@
 // src/screens/AdminLettersScreen.jsx — admin / super admin.
-// Letters are NEVER locked here: pick any staff member, generate the letter
-// (which unlocks it in that person's app), download it, or withdraw it.
+// Letters are NEVER locked here: pick any staff member, generate ANY of the
+// six letters (which unlocks it in that person's app), view / download the
+// very same PDF the website makes, or withdraw it.
+//   Termination — pick any staff member + last working day (any date).
+//   Leaving / Experience — last working day comes from the resignation, or
+//   pick any date (today / future for someone still working).
 // Below: every letter of this type generated before, newest first.
 import React, { useCallback, useEffect, useState } from "react";
 import { ActivityIndicator, Alert, RefreshControl, ScrollView, Text, TouchableOpacity, View } from "react-native";
 import StaffPicker, { useAllStaff } from "../components/StaffPicker";
+import { useAuth } from "../contexts/AuthContext";
 import Avatar from "../components/Avatar";
 import { Badge, Card, SectionTitle } from "../components/ModuleUI";
-import { getIssuedLetters, getStaffLetters, issueLetter, revokeLetter } from "../services/letterService";
-import { LETTER_TYPES, SERVER_LETTERS, buildLetter, downloadLetterPdf } from "../utils/letters";
+import { getIssuedLetters, getStaffLetters, revokeLetter } from "../services/letterService";
+import { LETTER_TYPES, RELIEVING_LETTERS, downloadLetterPdf, viewLetterPdf } from "../utils/letters";
 import LetterDetailsSheet from "../components/LetterDetailsSheet";
 import { colors, radius } from "../theme/colors";
 import { formatShortDate } from "../utils/format";
 
 export default function AdminLettersScreen({ initialType = "offer" }) {
+  // View-only (super admin inside a client company): letters can be viewed / downloaded, not generated or withdrawn.
+  const { isViewOnly } = useAuth();
   const [type, setType] = useState(initialType);
   const { staff, loading: staffLoading } = useAllStaff(true);
   const [selected, setSelected] = useState(null);
-  const [status, setStatus] = useState(null); // this staff member's row for `type`
+  // All six rows for the selected staff member — switching the letter type
+  // just picks another row (no new server call).
+  const [rows, setRows] = useState(null);
   const [statusLoading, setStatusLoading] = useState(false);
-  const [history, setHistory] = useState([]);
   const [historyLoading, setHistoryLoading] = useState(true);
   const [busy, setBusy] = useState("");
   const [refreshing, setRefreshing] = useState(false);
-  // Offer / Joining / Confirmation: details form open for the selected staff.
+  // "Generate" opens the details form (all six letters) for the selected staff.
   const [formOpen, setFormOpen] = useState(false);
 
   const label = LETTER_TYPES.find((l) => l.key === type)?.label || "Letter";
 
+  // Every generated letter is loaded once; switching the type only filters.
+  const [allHistory, setAllHistory] = useState([]);
   const loadHistory = useCallback(async () => {
     setHistoryLoading(true);
     try {
-      setHistory(await getIssuedLetters(type));
+      setAllHistory(await getIssuedLetters());
     } catch {
-      setHistory([]);
+      setAllHistory([]);
     } finally {
       setHistoryLoading(false);
     }
-  }, [type]);
+  }, []);
+  const history = allHistory.filter((h) => h.type === type);
 
   const loadStatus = useCallback(async () => {
-    if (!selected?._id) return setStatus(null);
+    if (!selected?._id) return setRows(null);
     setStatusLoading(true);
     try {
-      const rows = await getStaffLetters(selected._id);
-      setStatus(rows.find((r) => r.type === type) || null);
+      setRows(await getStaffLetters(selected._id));
     } catch {
-      setStatus(null);
+      setRows(null);
     } finally {
       setStatusLoading(false);
     }
-  }, [selected, type]);
+  }, [selected]);
+  const status = rows ? rows.find((r) => r.type === type) || null : null;
 
   useEffect(() => {
     loadHistory();
@@ -65,23 +76,9 @@ export default function AdminLettersScreen({ initialType = "offer" }) {
     setRefreshing(false);
   };
 
-  const generate = async () => {
-    // These ask for any missing details (name, Mr./Ms., designation, salary…).
-    if (SERVER_LETTERS.includes(type)) {
-      setFormOpen(true);
-      return;
-    }
-    setBusy("issue");
-    try {
-      const res = await issueLetter(selected._id, type);
-      Alert.alert("Generated", `${res?.message || label + " generated"}. ${selected.staffName} can now open it in the app.`);
-      await Promise.all([loadStatus(), loadHistory()]);
-    } catch (e) {
-      Alert.alert("Couldn't generate", e.response?.data?.message || "Please try again.");
-    } finally {
-      setBusy("");
-    }
-  };
+  // Every letter asks for its details first (name, Mr./Ms., designation,
+  // salary… / last working day), same form as the website.
+  const generate = () => setFormOpen(true);
 
   const withdraw = (staffObj, letterType) => {
     Alert.alert("Withdraw letter?", `${staffObj.staffName} will no longer see this letter.`, [
@@ -109,25 +106,31 @@ export default function AdminLettersScreen({ initialType = "offer" }) {
     await Promise.all([loadStatus(), loadHistory()]);
   };
 
-  // Full staff record (dates) is needed to build the PDF on the phone.
-  const fullStaff = (id) => staff.find((s) => String(s._id) === String(id));
-
+  // The PDF comes from the server — identical to the website's.
   const download = async (staffObj, letterType, issuedAt) => {
-    const full = fullStaff(staffObj._id) || staffObj;
-    const letter = buildLetter(letterType, full);
-    if (letter.missing && !SERVER_LETTERS.includes(letterType)) {
-      Alert.alert("Missing details", letter.missing.replace("on your profile", "on this staff profile"));
-      return;
-    }
     setBusy(`dl-${staffObj._id}-${letterType}`);
     try {
-      await downloadLetterPdf(letterType, full, issuedAt, { staffId: staffObj._id });
+      await downloadLetterPdf(letterType, staffObj, issuedAt, { staffId: staffObj._id });
     } catch (e) {
-      Alert.alert("Download failed", e?.message || "Couldn't generate the PDF. Please try again.");
+      Alert.alert("Download failed", e?.message || "Couldn't get the PDF. Please try again.");
     } finally {
       setBusy("");
     }
   };
+
+  const view = async (staffObj, letterType) => {
+    setBusy(`view-${staffObj._id}-${letterType}`);
+    try {
+      await viewLetterPdf(letterType, staffObj, { staffId: staffObj._id });
+    } catch (e) {
+      Alert.alert("Couldn't open the letter", e?.message || "Please try again.");
+    } finally {
+      setBusy("");
+    }
+  };
+
+  // Relieving letters need the last working day chosen in the form first.
+  const canOpen = !!status && status.eligible && (status.issued || !RELIEVING_LETTERS.includes(type));
 
   return (
     <ScrollView
@@ -185,26 +188,35 @@ export default function AdminLettersScreen({ initialType = "offer" }) {
                 {status.issued
                   ? `Generated ${formatShortDate(status.issuedAt)}${status.issuedByName ? ` by ${status.issuedByName}` : ""}`
                   : status.eligible
-                    ? "Not generated yet — the staff member sees it locked."
+                    ? `Not generated yet — ${selected.staffName} sees it locked.${
+                        RELIEVING_LETTERS.includes(type) ? " Tap Generate to choose the last working day (any date)." : ""
+                      }`
                     : status.reason}
               </Text>
               <View style={{ flexDirection: "row", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
-                {status.eligible ? (
+                {status.eligible && !isViewOnly ? (
                   <Btn
-                    label={status.issued ? (SERVER_LETTERS.includes(type) ? "✎ Edit & generate again" : "Generate again") : "✨ Generate"}
+                    label={status.issued ? "✎ Edit & generate again" : "✨ Generate"}
                     primary
                     busy={busy === "issue"}
                     onPress={generate}
                   />
                 ) : null}
-                {status.eligible ? (
+                {canOpen ? (
+                  <Btn
+                    label="👁 View"
+                    busy={busy === `view-${selected._id}-${type}`}
+                    onPress={() => view(selected, type)}
+                  />
+                ) : null}
+                {canOpen ? (
                   <Btn
                     label="⬇ PDF"
                     busy={busy === `dl-${selected._id}-${type}`}
                     onPress={() => download(selected, type, status.issuedAt)}
                   />
                 ) : null}
-                {status.issued ? (
+                {status.issued && !isViewOnly ? (
                   <Btn label="Withdraw" danger busy={busy === `revoke-${selected._id}`} onPress={() => withdraw(selected, type)} />
                 ) : null}
               </View>
@@ -245,6 +257,7 @@ export default function AdminLettersScreen({ initialType = "offer" }) {
                 {h.letterDate ? ` · dated ${formatShortDate(h.letterDate)}` : ""}
               </Text>
             </View>
+            <Btn label="👁" busy={busy === `view-${h.staff._id}-${h.type}`} onPress={() => view(h.staff, h.type)} />
             <Btn
               label="⬇"
               busy={busy === `dl-${h.staff._id}-${h.type}`}

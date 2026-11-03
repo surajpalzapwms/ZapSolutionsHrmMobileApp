@@ -23,7 +23,7 @@ function formatBirthday(b) {
 }
 
 export default function ProfileScreen() {
-  const { user, logout, hasLeft, reloadMyProfile, myProfile } = useAuth();
+  const { user, logout, hasLeft, reloadMyProfile, reloadMyPhoto, myProfile, myPhotoUrl, isSuperAdmin, tenant, leaveCompany } = useAuth();
   const { attendance, loading: attendanceLoading } = useAttendance();
   // Start from the profile already loaded at login (instant), then refresh.
   const [staff, setStaff] = useState(myProfile);
@@ -46,13 +46,20 @@ export default function ProfileScreen() {
     };
   }, []);
 
-  const photoUrl = staff?.photoUrl || null;
+  // Staff: the photo of the Staff record. Super admin has no Staff record - their
+  // photo is kept on the login account (myPhotoUrl: login answer / my documents).
+  const photoUrl = staff?.photoUrl || myPhotoUrl || null;
   const hasPhoto = !!(photoUrl || myLocal);
 
   const refreshStaff = async () => {
-    const res = await staffService.getMyProfile();
-    setStaff(res.data?.data || res.data || null);
+    try {
+      const res = await staffService.getMyProfile();
+      setStaff(res.data?.data || res.data || null);
+    } catch {
+      // No Staff record (super admin) - nothing to refresh here.
+    }
     reloadMyProfile?.(); // Home header + cached profile pick up the new photo too
+    reloadMyPhoto?.(); // super admin: the account's own photo
   };
 
   // Square crop → 512×512 JPEG → upload. Shown at once from the phone copy.
@@ -121,8 +128,9 @@ export default function ProfileScreen() {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: 40 }}
       >
-        {/* Today's working ring — hidden once the staff member has left */}
-        {hasLeft ? (
+        {/* Today's working ring — hidden once the staff member has left, and
+            never shown to the super admin (no working hours of their own). */}
+        {isSuperAdmin ? null : hasLeft ? (
           <View style={[styles.card, { flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: 16 }]}>
             <View style={{ flex: 1, marginRight: 12 }}>
               <Text style={{ fontSize: 14, fontWeight: "700", color: colors.text }}>Relieved</Text>
@@ -168,6 +176,16 @@ export default function ProfileScreen() {
 
         {/* Profile photo */}
         <View style={[styles.card, { marginBottom: 12, alignItems: "center", paddingVertical: 20 }]}>
+          {/* Super admin: Log out sits in the top-right corner of this card. */}
+          {isSuperAdmin ? (
+            <TouchableOpacity
+              onPress={logout}
+              activeOpacity={0.85}
+              style={[styles.logoutPill, styles.logoutCorner]}
+            >
+              <Text style={{ color: "#fff", fontWeight: "800", fontSize: 13 }}>Log out</Text>
+            </TouchableOpacity>
+          ) : null}
           <TouchableOpacity onPress={pickPhoto} activeOpacity={0.8} disabled={photoBusy}>
             <Avatar name={displayName} uri={photoUrl} size={96} self />
             {photoBusy ? (
@@ -189,6 +207,25 @@ export default function ProfileScreen() {
             ) : null}
           </View>
         </View>
+
+        {/* Super admin: the company being managed + the way back to the list. */}
+        {isSuperAdmin ? (
+          <View style={[styles.card, { marginBottom: 12, padding: 16, flexDirection: "row", alignItems: "center" }]}>
+            <View style={{ flex: 1, marginRight: 12 }}>
+              <Text style={{ fontSize: 12, color: colors.textMuted }}>Current company</Text>
+              <Text style={{ fontSize: 15, fontWeight: "800", color: colors.text, marginTop: 2 }} numberOfLines={1}>
+                {tenant?.companyName || "—"}
+              </Text>
+            </View>
+            <TouchableOpacity
+              onPress={() => leaveCompany()}
+              activeOpacity={0.85}
+              style={[styles.logoutPill, { backgroundColor: colors.primary }]}
+            >
+              <Text style={{ color: "#fff", fontWeight: "800", fontSize: 13 }}>⇄ Change company</Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
 
         {/* Details */}
         <View style={[styles.card, { marginTop: 12, paddingHorizontal: 18 }]}>
@@ -295,5 +332,13 @@ const styles = StyleSheet.create({
     paddingVertical: 9,
     borderRadius: radius.pill,
     backgroundColor: colors.danger,
+  },
+  logoutCorner: {
+    position: "absolute",
+    top: 10,
+    right: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    zIndex: 2,
   },
 });

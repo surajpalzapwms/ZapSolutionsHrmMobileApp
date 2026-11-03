@@ -1,5 +1,9 @@
 // src/components/LetterDetailsSheet.jsx — admin / super admin.
-// Opens on "Generate" for an Offer / Joining / Confirmation letter. The
+// Opens on "Generate" for any of the six letters (Offer / Joining /
+// Confirmation / Termination / Leaving / Experience). Termination / Leaving /
+// Experience ask for the last working day — filled in from the staff
+// member's resignation when there is one; ANY date (past, today, future)
+// can be picked. The
 // server says which details the letter needs and which are still MISSING
 // for this staff member — only those are asked (name, Mr. / Ms. from gender,
 // designation, joining date, salary per probation month, Aadhaar, PAN…).
@@ -18,7 +22,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import DateField from "./DateField";
+import DateField, { prettyYMD } from "./DateField";
 import { getLetterForm, issueLetter } from "../services/letterService";
 import { colors, radius } from "../theme/colors";
 
@@ -38,6 +42,11 @@ const inputStyle = {
   color: colors.text,
   backgroundColor: colors.card,
 };
+
+function Hint({ text }) {
+  if (!text) return null;
+  return <Text style={{ fontSize: 11, color: colors.primary, marginTop: 6, lineHeight: 16 }}>{text}</Text>;
+}
 
 function FieldInput({ field, value, onChange, probationMonths }) {
   const label = (
@@ -78,7 +87,13 @@ function FieldInput({ field, value, onChange, probationMonths }) {
   }
 
   if (field.kind === "date") {
-    return <DateField label={`${field.label}${field.required ? " *" : ""}`} value={value || ""} onChange={onChange} />;
+    // No minDate / maxDate: any past, current or future date can be chosen.
+    return (
+      <View>
+        <DateField label={`${field.label}${field.required ? " *" : ""}`} value={value || ""} onChange={onChange} />
+        <Hint text={field.hint} />
+      </View>
+    );
   }
 
   if (field.kind === "salaryRows") {
@@ -160,7 +175,12 @@ export default function LetterDetailsSheet({ visible, onClose, staff, type, titl
   }, [visible, staff?._id, type]);
 
   const fields = form?.fields || [];
-  const shown = useMemo(() => (showAll ? fields : fields.filter((f) => f.missing)), [fields, showAll]);
+  // The last working day is always shown on Termination / Leaving /
+  // Experience letters, so HR can see (and change) the date being printed.
+  const shown = useMemo(
+    () => (showAll ? fields : fields.filter((f) => f.missing || f.key === "lastWorkingDay")),
+    [fields, showAll],
+  );
   const filledCount = fields.length - fields.filter((f) => f.missing).length;
   const honor = values.gender === "Female" ? "Ms." : values.gender === "Male" ? "Mr." : "";
   const preview = [honor, values.staffName].filter(Boolean).join(" ");
@@ -212,6 +232,11 @@ export default function LetterDetailsSheet({ visible, onClose, staff, type, titl
                 <View style={{ backgroundColor: colors.primarySoft, borderRadius: radius.md, padding: 10, marginBottom: 12 }}>
                   <Text style={{ fontSize: 13, color: colors.primary }}>
                     Letter will say: <Text style={{ fontWeight: "800" }}>Dear {preview},</Text>
+                    {values.lastWorkingDay ? (
+                      <Text>
+                        {"  ·  "}last working day <Text style={{ fontWeight: "800" }}>{prettyYMD(values.lastWorkingDay)}</Text>
+                      </Text>
+                    ) : null}
                   </Text>
                 </View>
               ) : null}

@@ -188,10 +188,31 @@ export async function getYearHolidays() {
 // Admin / super admin: a birthday that came without a photo link gets the
 // one from the full staff list (which admins can read). Staff accounts skip
 // this — /api/staff is admin-only.
+// The full staff list is big — fetch it at most once every 5 minutes
+// instead of on every Home focus (this made Home slow for admins).
+let staffListCache = { at: 0, promise: null };
+function cachedStaffList() {
+  if (!staffListCache.promise || Date.now() - staffListCache.at > 5 * 60 * 1000) {
+    staffListCache = {
+      at: Date.now(),
+      promise: staffService.getAll().catch((e) => {
+        staffListCache = { at: 0, promise: null };
+        throw e;
+      }),
+    };
+  }
+  return staffListCache.promise;
+}
+
+// Called after an admin enables / disables someone, so the next load asks the server again.
+export function resetCelebrationCache() {
+  staffListCache = { at: 0, promise: null };
+}
+
 async function fillMissingPhotos(list) {
   if (!list.some((b) => !b.photoUrl)) return list;
   try {
-    const res = await staffService.getAll();
+    const res = await cachedStaffList();
     const byId = {};
     const byName = {};
     unwrapList(res.data).forEach((s) => {
@@ -229,4 +250,11 @@ export async function getYearBirthdays({ isAdmin = false } = {}) {
 export async function wishBirthday(id, message) {
   const res = await api.post(`/api/staff/birthdays/${id}/wish`, { message });
   return res.data;
+}
+
+// Wishes the logged-in staff member received for this year's birthday.
+// Backend: GET /api/staff/birthdays/my-wishes
+export async function getMyBirthdayWishes() {
+  const res = await api.get("/api/staff/birthdays/my-wishes", { params: { _t: Date.now() } });
+  return unwrapList(res.data);
 }

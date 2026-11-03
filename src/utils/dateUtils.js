@@ -1,4 +1,5 @@
 // src/utils/dateUtils.js
+import { weekendDays } from './tenant';
 export const formatDateToReadable = (dateString) => {
   if (!dateString) return '';
   try {
@@ -78,6 +79,16 @@ export const isSunday = (date) => {
   return d.getDay() === 0;
 };
 
+// Weekly off day(s) of the logged-in company's country (India: Sunday,
+// Saudi Arabia: Friday + Saturday …). Returns the day name or null.
+export const weekendName = (date) => {
+  if (!date) return null;
+  const day = new Date(date).getDay();
+  return weekendDays().includes(day)
+    ? ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][day]
+    : null;
+};
+
 export const isSaturday = (date) => {
   if (!date) return false;
   const d = new Date(date);
@@ -136,7 +147,8 @@ export const findHolidayForDate = (dateString, holidays = []) => {
  */
 export const getBlockedDayReason = (dateString, holidays = []) => {
   if (!dateString) return null;
-  if (isSunday(dateString)) return 'Sunday';
+  const off = weekendName(dateString);
+  if (off) return off;
   const holiday = findHolidayForDate(dateString, holidays);
   return holiday ? holiday.name || 'Holiday' : null;
 };

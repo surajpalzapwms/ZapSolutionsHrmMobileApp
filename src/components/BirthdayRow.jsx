@@ -2,10 +2,11 @@
 // initials) with a 🎂 badge, name, date, "in 3 days" / "Today", and on the
 // birthday itself a Wish button for everyone EXCEPT the birthday person.
 import React, { useState } from "react";
-import { ActivityIndicator, Alert, Text, TouchableOpacity, View } from "react-native";
+import { Text, TouchableOpacity, View } from "react-native";
 import Avatar from "./Avatar";
 import { Badge, Card } from "./ModuleUI";
-import { wishBirthday } from "../services/celebrationService";
+import BirthdayWishModal from "./BirthdayWishModal";
+import { useAuth } from "../contexts/AuthContext";
 import { colors, radius } from "../theme/colors";
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -40,10 +41,14 @@ export function BirthdayAvatar({ item, size = 48 }) {
   );
 }
 
-// Wish button. Calls onWished(updatedItem) after a successful wish.
+// Wish button — on the birthday itself (from 12:00 midnight India time) for
+// everyone EXCEPT the birthday person. Opens the party modal where the
+// message can be written. Calls onWished(updatedItem) after a wish is sent.
 export function WishButton({ item, onWished, compact }) {
-  const [busy, setBusy] = useState(false);
-  if (item.daysUntil !== 0 || item.isSelf || !item.canWish) return null;
+  const [open, setOpen] = useState(false);
+  // Sending a wish is a write: a view-only super admin (client company) can't.
+  const { isViewOnly } = useAuth();
+  if (item.daysUntil !== 0 || item.isSelf || !item.canWish || isViewOnly) return null;
 
   if (item.wishedByMe) {
     return (
@@ -53,38 +58,24 @@ export function WishButton({ item, onWished, compact }) {
     );
   }
 
-  const send = async () => {
-    setBusy(true);
-    try {
-      const res = await wishBirthday(item.id, `Happy Birthday, ${item.name.split(" ")[0]}! 🎂`);
-      onWished?.({ ...item, wishedByMe: true, wishCount: res?.data?.wishCount ?? item.wishCount + 1 });
-    } catch (e) {
-      Alert.alert("Couldn't send wish", e.response?.data?.message || "Please try again.");
-    } finally {
-      setBusy(false);
-    }
-  };
-
   return (
-    <TouchableOpacity
-      onPress={send}
-      disabled={busy}
-      activeOpacity={0.85}
-      style={{
-        paddingHorizontal: compact ? 12 : 14,
-        paddingVertical: compact ? 6 : 8,
-        borderRadius: radius.pill,
-        backgroundColor: "#BE185D",
-        minWidth: 74,
-        alignItems: "center",
-      }}
-    >
-      {busy ? (
-        <ActivityIndicator size="small" color="#fff" />
-      ) : (
+    <>
+      <TouchableOpacity
+        onPress={() => setOpen(true)}
+        activeOpacity={0.85}
+        style={{
+          paddingHorizontal: compact ? 12 : 14,
+          paddingVertical: compact ? 6 : 8,
+          borderRadius: radius.pill,
+          backgroundColor: "#BE185D",
+          minWidth: 74,
+          alignItems: "center",
+        }}
+      >
         <Text style={{ fontSize: 12, fontWeight: "800", color: "#fff" }}>🎉 Wish</Text>
-      )}
-    </TouchableOpacity>
+      </TouchableOpacity>
+      <BirthdayWishModal visible={open} item={item} onClose={() => setOpen(false)} onWished={onWished} />
+    </>
   );
 }
 

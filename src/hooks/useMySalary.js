@@ -24,6 +24,29 @@ import { advanceService } from "../services/advanceService";
 import { unwrapList } from "../utils/helpers";
 
 const EMPTY = {};
+const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
+// Full salary breakdown (same as the website) — basic, per day, leave,
+// late coming and the referral organisation commission (first month).
+const fromSaved = (rec) => ({
+  basicSalary: r2(rec?.basicSalary),
+  perDaySalary: r2(rec?.attendanceInfo?.perDaySalary),
+  leaveDeduction: r2(rec?.attendanceInfo?.leaveDeduction),
+  lateDeduction: r2(rec?.attendanceInfo?.lateDeduction),
+  referralCommission: r2(rec?.referralCommission),
+  referralOrganization: rec?.referral?.organizationName || "",
+  referralPercent: Number(rec?.referral?.percent) || 0,
+});
+const fromLive = (data) => ({
+  basicSalary: r2(data?.basicSalary),
+  perDaySalary: r2(data?.perDaySalary),
+  leaveDeduction: r2(data?.leaveDeduction),
+  lateDeduction: r2(data?.lateDeduction),
+  referralCommission: r2(data?.referralCommission),
+  referralOrganization: data?.referralOrganization || "",
+  referralPercent: Number(data?.referralPercent) || 0,
+  referralCommissionCapped: !!data?.referralCommissionCapped,
+});
 const sameId = (a, b) => a != null && b != null && String(a) === String(b);
 
 // ── Session caches ───────────────────────────────────────────────────────
@@ -54,6 +77,7 @@ function loadSavedPayroll(employeeId, year) {
           if (!(m >= 0 && m <= 11)) return;
           byMonth[m] = {
             ...rec,
+            ...fromSaved(rec),
             payableDays: rec.attendanceInfo?.payableDays,
             totalDays: rec.attendanceInfo?.totalWorkingDays,
             unpaidDays: rec.attendanceInfo?.unpaidLeaves,
@@ -81,20 +105,26 @@ function liveFigure(saved, data) {
     const savedNet = Number(saved.netSalary || 0);
     return {
       ...saved,
+      ...fromLive(data),
       netSalary: liveRounded,
       savedNetSalary: savedNet,
       differsFromSaved: Math.abs(liveRounded - savedNet) >= 0.01,
       payableDays: data.payableDays,
       totalDays: data.totalDaysInMonth,
       unpaidDays: data.unpaidLeaveDays,
+      lateDeduction: data.lateDeduction ?? 0,
+      lateDeductionEnabled: data.lateDeductionEnabled !== false,
     };
   }
   return {
+    ...fromLive(data),
     netSalary: data.finalSalary ?? data.netSalary,
     isEstimate: true,
     payableDays: data.payableDays,
     totalDays: data.totalDaysInMonth,
     unpaidDays: data.unpaidLeaveDays,
+    lateDeduction: data.lateDeduction ?? 0,
+    lateDeductionEnabled: data.lateDeductionEnabled !== false,
   };
 }
 

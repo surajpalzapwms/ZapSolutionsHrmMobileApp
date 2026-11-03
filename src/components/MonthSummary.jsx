@@ -14,10 +14,11 @@
 import React, { createContext, useContext } from "react";
 import { Text, View } from "react-native";
 import { colors, radius, shadow } from "../theme/colors";
+import { formatMoneyZero } from "../utils/format";
 
 const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 export const money2 = (v) =>
-  `₹${(Number(v) || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  formatMoneyZero(v);
 const days = (n) => {
   const v = round2(n);
   return `${v} day${v === 1 ? "" : "s"}`;
@@ -29,6 +30,7 @@ const shortDate = (value) => {
 };
 
 const CompactCtx = createContext(false);
+const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 function Line({ label, sub, value, color = colors.text, bold }) {
   const c = useContext(CompactCtx);
@@ -87,7 +89,21 @@ export default function MonthSummary({
   isRelievingMonth = false,
   finalPaidLeave = null, // { days, amount, months: [{ period, label, days, perDaySalary, amount }] }
   compact = false,
+  // Referral organisation (set by the super admin).
+  referral = null,
+  joinKey = null, // "YYYY-MM-DD"
+  period = null, // "YYYY-MM" of this month
+  adminView = false,
 }) {
+  const hasReferral = !!referral?.organizationName && Number(referral?.commissionPercent) > 0;
+  const referralPeriod = hasReferral ? (joinKey ? joinKey.slice(0, 7) : "") /* first month only */ : "";
+  const referralThisMonth = hasReferral && period && referralPeriod === period;
+  const takenThisMonth = Number(salary?.referralCommission) > 0;
+  const refMonthLabel = (() => {
+    if (!referralPeriod) return "joining month";
+    const [y, m] = referralPeriod.split("-").map(Number);
+    return `${MONTH_NAMES[m - 1] || m} ${y}`;
+  })();
   const c = compact;
   const plLeftAmount = pl?.credited ? Number(pl.plLeftAmount ?? pl.amount) || 0 : 0;
   const plTakenAmount = pl?.credited ? Number(pl.plTakenAmount) || 0 : 0;
@@ -136,22 +152,99 @@ export default function MonthSummary({
         ) : !salary ? (
           <Muted>No salary for this month.</Muted>
         ) : (
-          <Line
-            label={salary.isEstimate ? "Salary (estimate)" : `Salary (${salary.status || "saved"})`}
-            sub={
-              salary.payableDays != null && salary.totalDays != null
-                ? `${salary.payableDays}/${salary.totalDays} days paid${salary.unpaidDays ? ` · ${salary.unpaidDays} unpaid` : ""}`
-                : undefined
-            }
-            value={money2(salaryAmount)}
-            color="#1E3A8A"
-          />
+          <>
+            {/* Full breakdown — every step, 2 decimal places */}
+            {Number(salary.basicSalary) > 0 ? (
+              <Line label="Basic salary (month)" value={money2(salary.basicSalary)} />
+            ) : null}
+            {Number(salary.perDaySalary) > 0 ? (
+              <Line
+                label="Per day salary"
+                sub={salary.totalDays ? `${money2(salary.basicSalary)} ÷ ${salary.totalDays} days` : undefined}
+                value={money2(salary.perDaySalary)}
+                color={colors.textMuted}
+              />
+            ) : null}
+            {salary.payableDays != null && salary.totalDays != null ? (
+              <Line
+                label="Days paid"
+                value={`${round2(salary.payableDays - (Number(salary.unpaidDays) || 0))}/${salary.totalDays}`}
+                color={colors.textMuted}
+              />
+            ) : null}
+            {Number(salary.leaveDeduction) > 0 ? (
+              <Line
+                label="− Leave deduction"
+                sub={salary.unpaidDays ? `${days(salary.unpaidDays)} unpaid × ${money2(salary.perDaySalary)}` : undefined}
+                value={money2(salary.leaveDeduction)}
+                color={colors.danger}
+              />
+            ) : null}
+            {Number(salary.lateDeduction) > 0 ? (
+              <Line label="− Late coming" value={money2(salary.lateDeduction)} color={colors.danger} />
+            ) : null}
+            {Number(salary.referralCommission) > 0 ? (
+              <Line
+                label={`− ${salary.referralOrganization || "Referral"} commission${
+                  salary.referralPercent ? ` (${round2(salary.referralPercent)}%)` : ""
+                }`}
+                sub={
+                  salary.referralCommissionCapped
+                    ? "First month · limited to the salary earned"
+                    : `First month · ${round2(salary.referralPercent)}% of ${money2(salary.basicSalary)}`
+                }
+                value={money2(salary.referralCommission)}
+                color="#7E22CE"
+              />
+            ) : null}
+            {Number(salary.advanceDeduction) > 0 ? (
+              <Line label="− Advance recovered" value={money2(salary.advanceDeduction)} color="#EA580C" />
+            ) : null}
+            <View style={{ borderTopWidth: 1, borderTopColor: colors.border, marginTop: 2 }}>
+              <Line
+                label={salary.isEstimate ? "= Salary (estimate)" : `= Salary (${salary.status || "saved"})`}
+                value={money2(salaryAmount)}
+                color="#1E3A8A"
+                bold
+              />
+            </View>
+          </>
         )}
-        {Number(salary?.advanceDeduction) > 0 ? (
-          <Text style={{ fontSize: 10, color: colors.textMuted }}>
-            {money2(salary.advanceDeduction)} advance already recovered in this payroll
-          </Text>
+        {salary && salary.lateDeductionEnabled === false ? (
+          <Text style={{ fontSize: 10, color: colors.textMuted }}>Late coming not deducted this month</Text>
         ) : null}
+      </Section>
+
+      {/* Referral organisation — always shown, so it's clear which month's
+          salary the commission comes out of. */}
+      <Section title="Referral organisation">
+        {hasReferral ? (
+          <>
+            <Line
+              label={referral.organizationName}
+              sub={`${round2(referral.commissionPercent)}% of first month salary · ${refMonthLabel}`}
+              value={
+                takenThisMonth
+                  ? money2(salary.referralCommission)
+                  : salary?.basicSalary
+                    ? money2(round2((Number(salary.basicSalary) * Number(referral.commissionPercent)) / 100))
+                    : `${round2(referral.commissionPercent)}%`
+              }
+              color="#7E22CE"
+            />
+            <Muted>
+              {takenThisMonth
+                ? "Taken from this month's salary (shown above)."
+                : referralThisMonth
+                  ? "Commission month — no salary earned yet to take it from."
+                  : `Not taken this month — taken from the ${refMonthLabel} salary.`}
+            </Muted>
+          </>
+        ) : (
+          <Muted>
+            No referral organisation.{adminView ? " Super admin can set it in Staff → details → Referral Organisation." : ""}
+          </Muted>
+        )}
       </Section>
 
       <Section title="Advance given">

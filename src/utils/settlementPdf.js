@@ -7,6 +7,9 @@
 // (frontend/src/components/staff/StaffSettlementModal.jsx +
 // utils/settlementGenerator.js), read from the same API payload.
 import { Alert, Share } from "react-native";
+import { monthBreakdownLines, monthTotals } from "./settlementBreakdown";
+import { formatMoneyZero } from "./format";
+import { companyName } from "./tenant";
 
 // expo-print / expo-sharing are loaded OPTIONALLY: if they are not installed
 // yet (npx expo install expo-print expo-sharing) the app still bundles and
@@ -25,7 +28,6 @@ try {
   Sharing = null;
 }
 
-const COMPANY_NAME = "ZAP Solutionz";
 
 const esc = (v) =>
   String(v ?? "")
@@ -34,7 +36,7 @@ const esc = (v) =>
     .replace(/>/g, "&gt;");
 
 export const money = (v) =>
-  `₹${(Number(v) || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  formatMoneyZero(v);
 export const d2 = (n) => String(Math.round((Number(n) || 0) * 100) / 100);
 const dz = (n) => (Number(n) ? d2(n) : "—");
 const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
@@ -100,14 +102,17 @@ export function buildSettlementHtml(data) {
   const lb = data.leaveBalance || {};
   const t = lb.totals;
   const fs = data.finalSettlement || {};
+  // Left during probation: no salary rate rows, no leave sections.
+  const probation = !!data.probationExit;
 
   const overview = [
     row("Staff Name", s.staffName),
     s.staffId ? row("Staff ID", s.staffId) : "",
-    row("Date of Confirmation", fmtDate(s.confirmationDate)),
-    row("Relieving Date", fmtDate(s.relievingDate)),
-    row("Monthly Salary", money(data.monthlySalary)),
-    row("Per Day Salary", money(data.perDaySalary)),
+    row(probation ? "Joining Date (Probation)" : "Joining Date", fmtDate(s.joiningDate)),
+    row("Date of Confirmation", probation ? "— (left during probation)" : fmtDate(s.confirmationDate)),
+    row(probation ? "Termination / Relieving Date" : "Relieving Date", fmtDate(s.relievingDate)),
+    probation ? "" : row("Monthly Salary", money(data.monthlySalary)),
+    probation ? "" : row("Per Day Salary", money(data.perDaySalary)),
   ].join("");
 
   const leave = [
@@ -135,13 +140,27 @@ export function buildSettlementHtml(data) {
     row("Paid Leave Remaining (encashed)", `${d2(lb.paidRemaining)} days`, "hl"),
   ].join("");
 
+  // Every month + how its amount came (same lines as "View details").
   const salaryRows = (data.months || [])
-    .map(
-      (m) => `<tr class="${m.pending > 0 ? "hl" : ""}">
-        <td class="l">${esc(m.label)}<div class="muted">${d2(m.payableDays - m.unpaidDays)}/${m.totalDays} days</div></td>
-        <td>${money(m.earned)}</td><td>${money(m.paid)}</td><td>${m.pending > 0 ? money(m.pending) : "—"}</td></tr>`,
-    )
+    .map((m) => {
+      const detail = monthBreakdownLines(m)
+        .map(
+          (l) => `<tr class="det ${l.kind === "total" ? "b" : ""}">
+            <td class="l" colspan="4">${l.sign && l.sign !== "=" ? `${l.sign === "-" ? "−" : "+"} ` : ""}${esc(l.label)}${
+              l.sub ? `<div class="muted">${esc(l.sub)}</div>` : ""
+            }</td>
+            <td class="${l.sign === "-" ? "red" : ""}">${l.sign === "-" ? "− " : ""}${money(l.amount)}</td></tr>`,
+        )
+        .join("");
+      return `<tr class="${m.pending > 0 ? "hl" : "mrow"}">
+        <td class="l">${esc(m.label)}<div class="muted">${d2(m.payableDays - m.unpaidDays)}/${m.totalDays} days paid</div></td>
+        <td class="${Number(m.unpaidDays) ? "red" : ""}">${Number(m.unpaidDays) ? `${d2(m.unpaidDays)} d` : "—"}</td>
+        <td>${money(m.earned)}</td><td>${money(m.paid)}</td><td>${m.pending > 0 ? money(m.pending) : "Settled"}</td></tr>${detail}`;
+    })
     .join("");
+  const mt = monthTotals(data.months || []);
+  const salaryTotal = `<tr class="b"><td class="l">Total</td><td class="red">${mt.unpaidDays ? `${d2(mt.unpaidDays)} d` : "—"}</td>
+    <td>${money(mt.earned)}</td><td>${money(mt.paid)}</td><td>${money(mt.pending)}</td></tr>`;
 
   const finalRows = [
     (data.pendingMonths || []).length === 0 ? row("Pending Salary", money(0)) : "",
@@ -153,10 +172,12 @@ export function buildSettlementHtml(data) {
         money(m.pending),
       ),
     ),
-    ...(fs.leaveEncashmentMonths || []).map((m) =>
+    ...(probation ? [] : fs.leaveEncashmentMonths || []).map((m) =>
       row(`Paid Leave ${m.label} (${d2(m.days)} days × ${money(m.perDaySalary)})`, money(m.amount)),
     ),
-    row(`Leave encashment — Paid Leave only (${d2(fs.leaveEncashmentDays)} days)`, money(fs.leaveEncashment), "b"),
+    probation
+      ? ""
+      : row(`Leave encashment — Paid Leave only (${d2(fs.leaveEncashmentDays)} days)`, money(fs.leaveEncashment), "b"),
     row("Total Amount Payable", money(fs.totalAmountPayable), "b"),
     fs.outstandingAdvance > 0 ? row("Less: Outstanding Advance", `− ${money(fs.outstandingAdvance)}`) : "",
     row("Balance Payable — Full & Final Settlement", money(fs.balancePayable), "hl"),
@@ -188,16 +209,22 @@ export function buildSettlementHtml(data) {
   .green { color: #16a34a; }
   .red { color: #dc2626; }
   .foot { color: #787878; font-size: 9px; margin-top: 6px; }
+  .det td { font-size: 9.5px; border-top: none; border-bottom: none; background: #fafcff; }
+  .det .l { padding-left: 20px; }
+  .note { background: #eff6ff; border: 1px solid #bfdbfe; color: #1e40af; padding: 8px; border-radius: 4px; margin-bottom: 14px; }
 </style></head><body>
   <div class="head">
-    <div><div class="company">${COMPANY_NAME}</div><h1>Full &amp; Final Settlement Statement</h1></div>
+    <div><div class="company">${esc(companyName())}</div><h1>Full &amp; Final Settlement Statement</h1></div>
     <div class="muted">Salary ${esc(period.fromLabel)} to ${esc(fmtDate(s.relievingDate))}</div>
   </div>
   ${section("Overview", overview)}
-  ${section("Leave Summary", leave)}
-  ${ledgerHtml(lb)}
+  ${
+    probation
+      ? '<div class="note">Left during the probation period — no leave is earned before confirmation, so there is no Leave Summary or leave encashment. Unpaid leave is deducted month by month below.</div>'
+      : `${section("Leave Summary", leave)}${ledgerHtml(lb)}`
+  }
   <table class="grid"><thead><tr><th class="l">Month-wise Salary (${esc(period.fromLabel)} – ${esc(period.toLabel)})</th>
-    <th>Salary Earned</th><th>Paid</th><th>Pending</th></tr></thead><tbody>${salaryRows}</tbody></table>
+    <th>Unpaid leave</th><th>Salary Earned</th><th>Paid</th><th>Pending</th></tr></thead><tbody>${salaryRows}${salaryTotal}</tbody></table>
   ${section("Final Settlement Amount", finalRows)}
   <p class="foot">Figures are calculated live from attendance, leave and payroll records as of ${esc(
     fmtDate(new Date().toISOString()),
@@ -211,12 +238,12 @@ function buildSettlementText(data) {
   const s = data.staff || {};
   const fs = data.finalSettlement || {};
   const lines = [
-    `${COMPANY_NAME} — Full & Final Settlement`,
+    `${companyName()} — Full & Final Settlement`,
     `Staff: ${s.staffName || "—"}`,
     `Relieving date: ${fmtDate(s.relievingDate)}`,
     "",
     ...(data.pendingMonths || []).map((m) => `${m.label} salary: ${money(m.pending)}`),
-    `Leave encashment (${d2(fs.leaveEncashmentDays)} days): ${money(fs.leaveEncashment)}`,
+    data.probationExit ? null : `Leave encashment (${d2(fs.leaveEncashmentDays)} days): ${money(fs.leaveEncashment)}`,
     `Total amount payable: ${money(fs.totalAmountPayable)}`,
     fs.outstandingAdvance > 0 ? `Less outstanding advance: − ${money(fs.outstandingAdvance)}` : null,
     `Balance payable: ${money(fs.balancePayable)}`,

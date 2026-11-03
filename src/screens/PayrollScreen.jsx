@@ -14,9 +14,10 @@ import { Badge, Card, Divider, ListItem, toneForStatus } from "../components/Mod
 import { useAuth } from "../contexts/AuthContext";
 import { colors, radius } from "../theme/colors";
 import { formatMoney, formatPeriod, formatShortDate } from "../utils/format";
+import { formatMoneyZero } from "../utils/format";
 
 const money2 = (v) =>
-  `₹${(Number(v) || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  formatMoneyZero(v);
 const num = (v) => Number(v) || 0;
 
 const staffNameOf = (item) =>
@@ -195,12 +196,24 @@ export function PayrollDetails({ item, showName, onBack }) {
           <Line key={`d${i}`} label={d.type || d.name || "Deduction"} value={`− ${money2(d.amount)}`} color={colors.danger} />
         ))}
         {leaveDeduction ? <Line label="Leave deduction" value={`− ${money2(leaveDeduction)}`} color={colors.danger} /> : null}
+        {num(info.lateDeduction) ? (
+          <Line label="Late coming" value={`− ${money2(info.lateDeduction)}`} color={colors.danger} />
+        ) : null}
+        {num(item.referralCommission) ? (
+          <Line
+            label={`${item.referral?.organizationName || "Referral"} commission${
+              num(item.referral?.percent) ? ` (${num(item.referral.percent)}%)` : ""
+            } · first month`}
+            value={`− ${money2(item.referralCommission)}`}
+            color="#7E22CE"
+          />
+        ) : null}
         {num(item.advanceDeduction) ? (
           <Line label="Advance recovered" value={`− ${money2(item.advanceDeduction)}`} color={colors.danger} />
         ) : null}
         {num(item.totalDeduction) ? (
           <Line label="Total deductions" value={`− ${money2(item.totalDeduction)}`} color={colors.danger} bold />
-        ) : deductions.length === 0 && !leaveDeduction && !num(item.advanceDeduction) ? (
+        ) : deductions.length === 0 && !leaveDeduction && !num(item.advanceDeduction) && !num(item.referralCommission) ? (
           <Line label="No deductions" value={money2(0)} />
         ) : null}
         <Divider />

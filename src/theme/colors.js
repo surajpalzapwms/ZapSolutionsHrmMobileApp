@@ -7,8 +7,11 @@ export const colors = {
 
   screen: "#F5F3FB", // soft lavender app background
   card: "#FFFFFF",
-  headerFrom: "#7B5CF0",
-  headerTo: "#5B3FD0",
+  // Header gradient — deep indigo with a purple glow (same as the
+  // reference screenshot). Only the header uses these.
+  headerFrom: "#3D36B4",
+  headerVia: "#231B72",
+  headerTo: "#5A2DA8",
 
   text: "#1E1B2E",
   textMuted: "#8E8AA3",

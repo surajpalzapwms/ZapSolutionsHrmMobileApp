@@ -1,10 +1,13 @@
 // src/utils/numberUtils.js
+import { getTenant } from "./tenant";
+import { getCountry } from "../config/tenants";
 export const formatCurrency = (amount) => {
   const num = typeof amount === "string" ? parseFloat(amount) : amount;
   if (isNaN(num) || num === null || num === undefined) return "$0.00";
-  return new Intl.NumberFormat("en-US", {
+  const country = getCountry(getTenant()?.country);
+  return new Intl.NumberFormat(country.locale, {
     style: "currency",
-    currency: "INR",
+    currency: getTenant()?.currency || country.currency,
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(num);

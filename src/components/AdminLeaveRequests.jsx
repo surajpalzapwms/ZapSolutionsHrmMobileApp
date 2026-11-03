@@ -2,6 +2,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { ActivityIndicator, Alert, Text, TouchableOpacity, View } from "react-native";
 import { attendanceService } from "../services/attendanceService";
+import { useAuth } from "../contexts/AuthContext";
 import { Badge, Divider, toneForStatus } from "./ModuleUI";
 import { colors, radius } from "../theme/colors";
 import { formatShortDate } from "../utils/format";
@@ -15,7 +16,10 @@ const LEAVE_LABEL = {
   casual: "Casual Leave",
 };
 
-export default function AdminLeaveRequests({ onlyPending = false, showActions = true }) {
+export default function AdminLeaveRequests({ onlyPending = false, showActions: showActionsProp = true }) {
+  // View-only (super admin inside a client company): no Approve / Reject.
+  const { isViewOnly } = useAuth();
+  const showActions = showActionsProp && !isViewOnly;
   const [filter, setFilter] = useState("pending");
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
